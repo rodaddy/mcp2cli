@@ -3,7 +3,7 @@
  * Routes through daemon by default. Set MCP2CLI_NO_DAEMON=1 for direct connection.
  */
 import { loadConfig } from "../../config/index.ts";
-import { connectToService } from "../../connection/index.ts";
+import { connectToService, connectToHttpService } from "../../connection/index.ts";
 import { listToolsViaDaemon } from "../../process/index.ts";
 import { listToolsForService, formatToolListing } from "../../schema/index.ts";
 import type { ToolListing, ToolSummary } from "../../schema/index.ts";
@@ -61,19 +61,10 @@ export async function handleServiceHelp(
 
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
-  // Only stdio backend supported in v1
-  if (service.backend !== "stdio") {
-    printError({
-      error: true,
-      code: "UNKNOWN_COMMAND",
-      message: `Backend "${service.backend}" not yet supported`,
-    });
-    process.exitCode = EXIT_CODES.VALIDATION;
-    return;
-  }
-
-  // Connect and introspect
-  const connection = await connectToService(service);
+  // Connect and introspect (stdio or http)
+  const connection = service.backend === "http"
+    ? await connectToHttpService(service)
+    : await connectToService(service);
 
   try {
     const tools = await listToolsForService(connection.client);
