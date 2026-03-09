@@ -70,25 +70,27 @@ describe("convertEntry", () => {
     expect(result.warning).toBeUndefined();
   });
 
-  test("warns on HTTP entry", () => {
+  test("converts HTTP entry to http backend", () => {
     const entry = { type: "http", url: "http://localhost:3000" };
     const result = convertEntry("http-svc", entry);
-    expect(result.config).toBeUndefined();
-    expect(result.warning).toContain("HTTP/SSE");
+    expect(result.config).toBeDefined();
+    expect(result.config!.backend).toBe("http");
+    expect(result.warning).toBeUndefined();
   });
 
-  test("warns on SSE entry", () => {
+  test("converts SSE entry to http backend", () => {
     const entry = { type: "sse", url: "http://localhost:3000/sse" };
     const result = convertEntry("sse-svc", entry);
-    expect(result.config).toBeUndefined();
-    expect(result.warning).toContain("HTTP/SSE");
+    expect(result.config).toBeDefined();
+    expect(result.config!.backend).toBe("http");
+    expect(result.warning).toBeUndefined();
   });
 
-  test("warns on entry with url field (no type)", () => {
+  test("converts entry with url field (no type, no command) to http backend", () => {
     const entry = { url: "http://localhost:3000" };
     const result = convertEntry("url-svc", entry);
-    expect(result.config).toBeUndefined();
-    expect(result.warning).toContain("HTTP/SSE");
+    expect(result.config).toBeDefined();
+    expect(result.config!.backend).toBe("http");
   });
 
   test("warns on missing command", () => {
@@ -134,7 +136,7 @@ describe("mergeEntries", () => {
 
   test("collects warnings", () => {
     const converted = [
-      { name: "warn-svc", warning: "warn-svc: uses HTTP/SSE transport (not supported in v1)" },
+      { name: "warn-svc", warning: "warn-svc: HTTP/SSE entry missing url field" },
       { name: "ok-svc", config: { backend: "stdio" as const, command: "cmd", args: [], env: {} } },
     ];
     const existingConfig = { services: {} };
@@ -235,7 +237,7 @@ describe("handleBootstrap", () => {
     }
   });
 
-  test("with all HTTP entries: outputs summary with empty added array, does NOT write services.json", async () => {
+  test("with all HTTP entries: converts them and writes services.json", async () => {
     const claudeConfig = {
       mcpServers: {
         "http-svc": { type: "http", url: "http://localhost:3000" },
@@ -258,11 +260,14 @@ describe("handleBootstrap", () => {
       await handleBootstrap([]);
       expect(process.exitCode as number).toBe(0);
       const output = JSON.parse(logs[logs.length - 1]);
-      expect(output.added).toEqual([]);
-      expect(output.warnings.length).toBeGreaterThan(0);
-      // File should NOT be written
+      expect(output.added).toContain("http-svc");
+      expect(output.added).toContain("sse-svc");
+      // File SHOULD be written now
       const exists = await Bun.file(configPath).exists();
-      expect(exists).toBe(false);
+      expect(exists).toBe(true);
+      const written = await Bun.file(configPath).json();
+      expect(written.services["http-svc"].backend).toBe("http");
+      expect(written.services["sse-svc"].backend).toBe("http");
     } finally {
       console.log = origLog;
       Object.assign(process.env, origEnv);

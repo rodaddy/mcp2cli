@@ -2,6 +2,7 @@ import { printError } from "../errors.ts";
 import { loadConfig, getConfigPath } from "../../config/index.ts";
 import { ConfigError } from "../../config/errors.ts";
 import { connectToService } from "../../connection/client.ts";
+import { connectToHttpService } from "../../connection/http-transport.ts";
 import { listToolsForService, getToolSchema } from "../../schema/introspect.ts";
 import {
   detectPrefixGroups,
@@ -150,19 +151,10 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     return;
   }
 
-  // Only stdio backend supported
-  if (service.backend !== "stdio") {
-    printError({
-      error: true,
-      code: "INPUT_VALIDATION_ERROR",
-      message: `Backend "${service.backend}" not supported for skill generation`,
-    });
-    process.exitCode = EXIT_CODES.VALIDATION;
-    return;
-  }
-
-  // Connect to MCP server
-  const connection = await connectToService(service);
+  // Connect to MCP server (stdio or http)
+  const connection = service.backend === "http"
+    ? await connectToHttpService(service)
+    : await connectToService(service);
 
   try {
     // List all tools

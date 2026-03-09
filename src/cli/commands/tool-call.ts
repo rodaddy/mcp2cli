@@ -7,7 +7,7 @@ import {
 } from "../../invocation/index.ts";
 import { validationResultToCliError } from "../../validation/pipelines.ts";
 import { loadConfig } from "../../config/index.ts";
-import { connectToService } from "../../connection/index.ts";
+import { connectToService, connectToHttpService } from "../../connection/index.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { getToolSchema } from "../../schema/introspect.ts";
 import { printError } from "../errors.ts";
@@ -143,13 +143,10 @@ export async function handleToolCall(args: string[]): Promise<void> {
 
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
-  // 4. Only stdio backend supported in v1
-  if (service.backend !== "stdio") {
-    throw new Error(`Backend "${service.backend}" not yet supported`);
-  }
-
-  // 5. Connect to MCP server
-  const connection = await connectToService(service);
+  // 4. Connect to MCP server (stdio or http)
+  const connection = service.backend === "http"
+    ? await connectToHttpService(service)
+    : await connectToService(service);
 
   try {
     // Dry-run interception (inside try/finally so connection closes)

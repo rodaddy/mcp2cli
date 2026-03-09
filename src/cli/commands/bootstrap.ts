@@ -16,6 +16,10 @@ interface ConvertResult {
     command: string;
     args?: string[];
     env?: Record<string, string>;
+  } | {
+    backend: "http";
+    url: string;
+    headers?: Record<string, string>;
   };
   warning?: string;
 }
@@ -80,16 +84,24 @@ export function convertEntry(
   name: string,
   entry: Record<string, unknown>,
 ): ConvertResult {
-  // Check for HTTP/SSE transport
+  // Convert HTTP/SSE transport entries
   const entryType = entry.type as string | undefined;
   if (
     entryType === "http" ||
     entryType === "sse" ||
-    "url" in entry
+    (entryType === undefined && "url" in entry && !("command" in entry))
   ) {
+    const url = entry.url as string | undefined;
+    if (!url) {
+      return {
+        name,
+        warning: `${name}: HTTP/SSE entry missing url field`,
+      };
+    }
+    const headers = (entry.headers as Record<string, string>) ?? {};
     return {
       name,
-      warning: `${name}: uses HTTP/SSE transport (not supported in v1)`,
+      config: { backend: "http", url, headers },
     };
   }
 
