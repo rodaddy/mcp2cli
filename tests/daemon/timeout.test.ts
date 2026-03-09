@@ -33,6 +33,7 @@ function runCli(
     MCP2CLI_PID_FILE: join(tempDir, "daemon.pid"),
     MCP2CLI_SOCKET_PATH: join(tempDir, "daemon.sock"),
     MCP2CLI_IDLE_TIMEOUT: "10",
+    MCP2CLI_CACHE_DIR: join(tempDir, "schemas"),
     ...extraEnv,
   };
 

@@ -1,0 +1,18 @@
+{
+  "services": {
+    "n8n": {
+      "description": "n8n workflow automation",
+      "backend": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic/n8n-mcp"],
+      "allowTools": ["n8n_list_*", "n8n_get_*", "n8n_search_*"],
+      "blockTools": ["n8n_delete_*"]
+    },
+    "qmd": {
+      "description": "QMD document search and retrieval",
+      "backend": "stdio",
+      "command": "qmd",
+      "args": ["mcp"]
+    }
+  }
+}

@@ -51,6 +51,7 @@ mcp2cli discovers MCP servers from `~/.config/mcp2cli/services.json`:
 {
   "services": {
     "n8n": {
+      "description": "n8n workflow automation",
       "backend": "stdio",
       "command": "npx",
       "args": ["-y", "@anthropic-ai/n8n-mcp"],
@@ -60,6 +61,7 @@ mcp2cli discovers MCP servers from `~/.config/mcp2cli/services.json`:
       }
     },
     "homekit": {
+      "description": "HomeKit smart home control",
       "backend": "stdio",
       "command": "node",
       "args": ["/path/to/homekit-mcp/dist/index.js"],
@@ -279,6 +281,7 @@ Restrict which tools are exposed per service using `allowTools` and `blockTools`
 {
   "services": {
     "n8n": {
+      "description": "n8n workflow automation",
       "backend": "stdio",
       "command": "npx",
       "args": ["-y", "@anthropic/n8n-mcp"],
@@ -313,6 +316,7 @@ HTTP/SSE services can define a `fallback` stdio config. If the remote gateway is
 {
   "services": {
     "n8n": {
+      "description": "n8n via HTTP gateway with stdio fallback",
       "backend": "http",
       "url": "http://mcp-gateway:3000/n8n",
       "fallback": {
