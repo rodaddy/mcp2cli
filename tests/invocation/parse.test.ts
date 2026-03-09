@@ -191,4 +191,85 @@ describe("parseToolCallArgs", () => {
       expect(result.value.params).toEqual({});
     }
   });
+
+  // --- Phase 18: --format flag ---
+
+  test("no --format flag defaults to json", () => {
+    const result = parseToolCallArgs(["n8n", "list"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.format).toBe("json");
+    }
+  });
+
+  test("--format table sets format (space syntax)", () => {
+    const result = parseToolCallArgs(["n8n", "list", "--format", "table"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.format).toBe("table");
+    }
+  });
+
+  test("--format=yaml sets format (equals syntax)", () => {
+    const result = parseToolCallArgs(["n8n", "list", "--format=yaml"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.format).toBe("yaml");
+    }
+  });
+
+  test("--format csv works", () => {
+    const result = parseToolCallArgs(["n8n", "list", "--format", "csv"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.format).toBe("csv");
+    }
+  });
+
+  test("--format ndjson works", () => {
+    const result = parseToolCallArgs(["n8n", "list", "--format=ndjson"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.format).toBe("ndjson");
+    }
+  });
+
+  test("--format with invalid value returns error", () => {
+    const result = parseToolCallArgs(["n8n", "list", "--format", "xml"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INPUT_VALIDATION_ERROR");
+      expect(result.error.message).toContain("xml");
+      expect(result.error.message).toContain("Valid formats");
+    }
+  });
+
+  test("--format= with invalid value returns error (equals syntax)", () => {
+    const result = parseToolCallArgs(["n8n", "list", "--format=tsv"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INPUT_VALIDATION_ERROR");
+      expect(result.error.message).toContain("tsv");
+    }
+  });
+
+  test("--format combined with other flags", () => {
+    const result = parseToolCallArgs([
+      "n8n",
+      "list",
+      "--format",
+      "table",
+      "--params",
+      "{}",
+      "--fields=id,name",
+      "--dry-run",
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.format).toBe("table");
+      expect(result.value.dryRun).toBe(true);
+      expect(result.value.fields).toEqual(["id", "name"]);
+      expect(result.value.params).toEqual({});
+    }
+  });
 });

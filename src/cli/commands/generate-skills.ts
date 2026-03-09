@@ -12,10 +12,18 @@ import {
   resolveOutputDir,
   planFileWrites,
   executeFileWrites,
+  extractManualSections,
+  injectManualSections,
+  parseExistingTools,
+  computeSkillDiff,
+  formatDiffPreview,
 } from "../../generation/index.ts";
+import { filterTools, extractPolicy } from "../../access/filter.ts";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { ConflictMode, SkillTemplateInput } from "../../generation/types.ts";
 import type { SchemaOutput } from "../../schema/types.ts";
+import type { ToolSummary } from "../../schema/types.ts";
+import { join } from "node:path";
 
 /**
  * Extract trigger keywords from tool descriptions.
@@ -85,12 +93,35 @@ function parseOutputFlag(args: string[]): string | undefined {
 }
 
 /**
+ * Read existing SKILL.md content from the output directory (if it exists).
+ * Returns null if no file exists.
+ */
+async function readExistingSkillFile(
+  outputDir: string,
+): Promise<string | null> {
+  const skillPath = join(outputDir, "SKILL.md");
+  const file = Bun.file(skillPath);
+  if (await file.exists()) {
+    return file.text();
+  }
+  return null;
+}
+
+/**
  * Generate skill files from MCP service schemas.
  *
- * Usage: mcp2cli generate-skills <service> [--dry-run] [--conflict=skip|force|merge] [--output=<path>]
+ * Usage: mcp2cli generate-skills <service> [--dry-run] [--diff] [--conflict=skip|force|merge] [--output=<path>]
+ *
+ * Flags:
+ *   --diff        Preview what would change without writing files
+ *   --dry-run     Output plan without writing files
+ *   --conflict    How to handle existing files: skip|force|merge (default: skip)
+ *   --output      Output directory path
  *
  * Connects to the MCP server, introspects all tools, groups them by noun prefix,
  * generates a slim SKILL.md and per-group reference files.
+ * Applies access control (allow/block lists) before generating.
+ * Preserves manual sections (MANUAL:START/END) across regeneration.
  *
  * Pre-connection errors use printError + exitCode + return (never throw).
  * Post-connection errors propagate to main().catch().
@@ -110,6 +141,7 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
 
   // Parse flags
   const dryRun = args.includes("--dry-run");
+  const diffMode = args.includes("--diff");
   let conflictMode = parseConflictMode(args);
   const outputFlag = parseOutputFlag(args);
 
@@ -158,7 +190,7 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
 
   try {
     // List all tools
-    const tools = await listToolsForService(connection.client);
+    let tools: ToolSummary[] = await listToolsForService(connection.client);
 
     if (tools.length === 0) {
       printError({
@@ -170,7 +202,21 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
       return;
     }
 
-    // Get full schemas for each tool
+    // Apply access control -- filter tools by allow/block lists
+    const policy = extractPolicy(service);
+    tools = filterTools(tools, policy);
+
+    if (tools.length === 0) {
+      printError({
+        error: true,
+        code: "INPUT_VALIDATION_ERROR",
+        message: "All tools are blocked by access policy. No skills to generate.",
+      });
+      process.exitCode = EXIT_CODES.VALIDATION;
+      return;
+    }
+
+    // Get full schemas for each tool (already filtered by access control)
     const schemas: SchemaOutput[] = [];
     for (const tool of tools) {
       const schema = await getToolSchema(connection.client, tool.name, serviceName);
@@ -193,8 +239,33 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
       triggerKeywords,
     };
 
+    // Resolve output directory
+    const outputDir = resolveOutputDir(serviceName, outputFlag);
+
+    // --diff mode: preview changes without writing
+    if (diffMode) {
+      const existingContent = await readExistingSkillFile(outputDir);
+      const existingTools = existingContent
+        ? parseExistingTools(existingContent)
+        : [];
+      const diff = computeSkillDiff(serviceName, existingTools, tools);
+      const preview = formatDiffPreview(diff);
+      console.log(preview);
+      process.exitCode = EXIT_CODES.SUCCESS;
+      return;
+    }
+
     // Generate SKILL.md
-    const skillMd = generateSkillMd(input);
+    let skillMd = generateSkillMd(input);
+
+    // Preserve manual sections from existing SKILL.md
+    const existingContent = await readExistingSkillFile(outputDir);
+    if (existingContent) {
+      const manualSections = extractManualSections(existingContent);
+      if (manualSections.length > 0) {
+        skillMd = injectManualSections(skillMd, manualSections);
+      }
+    }
 
     // Token budget check
     const tokenCount = estimateTokens(skillMd);
@@ -213,9 +284,6 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
       generated.set(refPath, refMd);
       referenceFiles.push(refPath);
     }
-
-    // Resolve output directory
-    const outputDir = resolveOutputDir(serviceName, outputFlag);
 
     // Dry-run: output plan without writing files
     if (dryRun) {

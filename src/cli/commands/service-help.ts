@@ -7,6 +7,7 @@ import { connectToService, connectToHttpService } from "../../connection/index.t
 import { listToolsViaDaemon } from "../../process/index.ts";
 import { listToolsForService, formatToolListing } from "../../schema/index.ts";
 import type { ToolListing, ToolSummary } from "../../schema/index.ts";
+import { filterTools, extractPolicy } from "../../access/index.ts";
 import { isAiMode } from "../help.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
@@ -36,7 +37,9 @@ export async function handleServiceHelp(
     const result = await listToolsViaDaemon({ service: serviceName });
 
     if (result.success) {
-      const tools = result.result as ToolSummary[];
+      const allTools = result.result as ToolSummary[];
+      const policy = extractPolicy(service);
+      const tools = filterTools(allTools, policy);
       const listing: ToolListing = {
         service: serviceName,
         description: service.description ?? "(no description)",
@@ -67,7 +70,9 @@ export async function handleServiceHelp(
     : await connectToService(service);
 
   try {
-    const tools = await listToolsForService(connection.client);
+    const allTools = await listToolsForService(connection.client);
+    const policy = extractPolicy(service);
+    const tools = filterTools(allTools, policy);
 
     const listing: ToolListing = {
       service: serviceName,

@@ -249,6 +249,126 @@ mcp2cli n8n n8n_get_workflow --params '{"id": "abc123"}'
 
 This pattern keeps MCP tool definitions out of the agent's system prompt entirely. The agent only pays context cost when it actually needs to call a tool, and even then only for the specific tool's schema -- not all tools from all servers.
 
+## v1.3 Advanced Features
+
+### Schema Caching
+
+Schemas are cached locally to avoid re-fetching on every invocation. Cached schemas live at `~/.cache/mcp2cli/schemas/` with a 24-hour TTL. Cache drift is detected via SHA-256 hashing -- if the upstream schema changes, the cache is automatically invalidated.
+
+```bash
+# Check cache status (age, TTL, drift)
+mcp2cli cache status
+
+# Clear all cached schemas
+mcp2cli cache clear
+
+# Clear cache for a specific service
+mcp2cli cache clear n8n
+
+# Bypass cache for a single schema lookup
+mcp2cli schema n8n.n8n_list_workflows --fresh
+```
+
+Override the cache directory with `MCP2CLI_CACHE_DIR`.
+
+### Access Control
+
+Restrict which tools are exposed per service using `allowTools` and `blockTools` in `services.json`. Both accept glob patterns.
+
+```json
+{
+  "services": {
+    "n8n": {
+      "backend": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic/n8n-mcp"],
+      "allowTools": ["n8n_list_*", "n8n_get_*"],
+      "blockTools": ["n8n_delete_*"]
+    }
+  }
+}
+```
+
+When both are present, `allowTools` is evaluated first (whitelist), then `blockTools` removes matches from the allowed set.
+
+#### Cross-Service Tool Search
+
+Search for tools across all services using cached schemas:
+
+```bash
+# Find all tools matching a pattern
+mcp2cli grep "workflow"
+
+# Regex patterns work
+mcp2cli grep "delete|remove"
+```
+
+This searches cached schemas only -- no MCP connections are made.
+
+### Gateway Resilience
+
+HTTP/SSE services can define a `fallback` stdio config. If the remote gateway is unreachable, mcp2cli transparently falls back to a local MCP server process.
+
+```json
+{
+  "services": {
+    "n8n": {
+      "backend": "http",
+      "url": "http://mcp-gateway:3000/n8n",
+      "fallback": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/n8n-mcp"]
+      }
+    }
+  }
+}
+```
+
+A circuit breaker protects against repeated failures: after 5 consecutive failures the circuit opens and routes directly to fallback for 60 seconds before re-probing the primary. Circuit state is persisted to `~/.cache/mcp2cli/circuit-breaker/` so it survives process restarts.
+
+### Output Formats
+
+Control output format with the `--format` flag:
+
+```bash
+mcp2cli n8n n8n_list_workflows --params '{}' --format table
+mcp2cli n8n n8n_list_workflows --params '{}' --format yaml
+mcp2cli n8n n8n_list_workflows --params '{}' --format csv
+mcp2cli n8n n8n_list_workflows --params '{}' --format ndjson
+```
+
+| Format | Description |
+|--------|-------------|
+| `json` | Default. Structured JSON (unchanged from v1.0) |
+| `table` | Aligned columns -- human-readable terminal output |
+| `yaml` | YAML output |
+| `csv` | RFC 4180 CSV -- pipe to spreadsheets or `csvtool` |
+| `ndjson` | One JSON object per line -- for streaming pipelines |
+
+Error responses are always JSON regardless of the `--format` flag.
+
+### Skill Auto-Regeneration
+
+Generated skill files can be previewed and kept in sync with upstream schema changes:
+
+```bash
+# Preview what would change without writing
+mcp2cli generate-skills --diff n8n
+
+# Regenerate (preserves manual sections)
+mcp2cli generate-skills n8n
+```
+
+Manual edits inside `MANUAL:START` / `MANUAL:END` markers are preserved across regeneration. When schema drift is detected (via the caching layer), skill regeneration can be triggered automatically.
+
+## v1.3 Environment Variables
+
+In addition to the variables listed above, v1.3 adds:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP2CLI_CACHE_DIR` | `~/.cache/mcp2cli` | Base directory for schema cache and circuit breaker state |
+
 ## Development
 
 ```bash

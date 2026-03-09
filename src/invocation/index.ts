@@ -16,3 +16,4 @@ export type {
   ToolCallSuccess,
 } from "./types.ts";
 export type { DryRunPreview } from "./dry-run.ts";
+export type { OutputFormat } from "../format/types.ts";

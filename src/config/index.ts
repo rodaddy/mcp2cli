@@ -1,5 +1,6 @@
 export {
   StdioServiceSchema,
+  StdioFallbackSchema,
   HttpServiceSchema,
   ServiceSchema,
   ServicesConfigSchema,
@@ -7,6 +8,7 @@ export {
 
 export type {
   StdioService,
+  StdioFallback,
   HttpService,
   ServiceConfig,
   ServicesConfig,

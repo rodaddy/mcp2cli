@@ -10,6 +10,7 @@ describe("validateToolCallInputs", () => {
       params: {},
       dryRun: false,
       fields: [],
+      format: "json",
     };
     const result = validateToolCallInputs(parsed);
     expect(result.valid).toBe(true);
@@ -22,6 +23,7 @@ describe("validateToolCallInputs", () => {
       params: {},
       dryRun: false,
       fields: [],
+      format: "json",
     };
     const result = validateToolCallInputs(parsed);
     expect(result.valid).toBe(false);
@@ -37,6 +39,7 @@ describe("validateToolCallInputs", () => {
       params: {},
       dryRun: false,
       fields: [],
+      format: "json",
     };
     const result = validateToolCallInputs(parsed);
     expect(result.valid).toBe(false);
@@ -52,6 +55,7 @@ describe("validateToolCallInputs", () => {
       params: { "../key": "value" },
       dryRun: false,
       fields: [],
+      format: "json",
     };
     const result = validateToolCallInputs(parsed);
     expect(result.valid).toBe(false);
@@ -67,6 +71,7 @@ describe("validateToolCallInputs", () => {
       params: { name: "val\x00" },
       dryRun: false,
       fields: [],
+      format: "json",
     };
     const result = validateToolCallInputs(parsed);
     expect(result.valid).toBe(false);
@@ -85,6 +90,7 @@ describe("validateToolCallInputs", () => {
       },
       dryRun: false,
       fields: [],
+      format: "json",
     };
     const result = validateToolCallInputs(parsed);
     expect(result.valid).toBe(true);
@@ -99,6 +105,7 @@ describe("validateToolCallInputs", () => {
       },
       dryRun: false,
       fields: [],
+      format: "json",
     };
     const result = validateToolCallInputs(parsed);
     expect(result.valid).toBe(false);
@@ -119,6 +126,7 @@ describe("validateToolCallInputs", () => {
       },
       dryRun: false,
       fields: [],
+      format: "json",
     };
     const result = validateToolCallInputs(parsed);
     expect(result.valid).toBe(true);
