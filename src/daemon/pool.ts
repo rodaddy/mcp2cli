@@ -4,10 +4,10 @@
  * MEM-04: Bounded pool size (default 50, configurable via MCP2CLI_POOL_MAX).
  * MEM-05: Health check before reuse -- stale connections are replaced.
  */
-import { connectToService } from "../connection/index.ts";
+import { connectToService, connectToHttpService } from "../connection/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import type { McpConnection } from "../connection/types.ts";
-import type { ServicesConfig, StdioService } from "../config/index.ts";
+import type { ServicesConfig } from "../config/index.ts";
 import { createLogger } from "../logger/index.ts";
 
 const log = createLogger("pool");
@@ -90,16 +90,21 @@ export class ConnectionPool {
         "service_not_configured",
       );
     }
-    if (serviceConfig.backend !== "stdio") {
+    // Create connection promise and store in pending map
+    log.info("connecting", { service: serviceName });
+    let connectFn: () => Promise<McpConnection>;
+    if (serviceConfig.backend === "http") {
+      connectFn = () => connectToHttpService(serviceConfig);
+    } else if (serviceConfig.backend === "stdio") {
+      connectFn = () => connectToService(serviceConfig);
+    } else {
+      const backend = (serviceConfig as { backend: string }).backend;
       throw new ConnectionError(
-        `Unsupported backend for service ${serviceName}: ${serviceConfig.backend}`,
+        `Unsupported backend for service ${serviceName}: ${backend}`,
         "unsupported_backend",
       );
     }
-
-    // Create connection promise and store in pending map
-    log.info("connecting", { service: serviceName });
-    const connectPromise = connectToService(serviceConfig as StdioService).then(
+    const connectPromise = connectFn().then(
       (connection) => {
         this.connections.set(serviceName, {
           connection,

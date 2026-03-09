@@ -92,7 +92,7 @@ describe("bootstrap integration", () => {
     expect(output.message).toContain(".claude.json");
   }, 15_000);
 
-  test("bootstrap skips HTTP entries with warning", async () => {
+  test("bootstrap converts HTTP entries alongside stdio", async () => {
     const homeDir = await makeTempDir();
     const configDir = await makeTempDir();
     const configPath = join(configDir, "services.json");
@@ -113,9 +113,12 @@ describe("bootstrap integration", () => {
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.stdout);
     expect(output.added).toContain("stdio-svc");
-    expect(output.added).not.toContain("http-svc");
-    expect(output.warnings.length).toBeGreaterThan(0);
-    expect(output.warnings[0]).toContain("HTTP/SSE");
+    expect(output.added).toContain("http-svc");
+
+    const written = await Bun.file(configPath).json();
+    expect(written.services["http-svc"].backend).toBe("http");
+    expect(written.services["http-svc"].url).toBe("http://localhost:3000");
+    expect(written.services["stdio-svc"].backend).toBe("stdio");
   }, 15_000);
 
   test("bootstrap merges with existing services.json", async () => {
@@ -191,7 +194,7 @@ describe("bootstrap integration", () => {
     expect(written.services.n8n.command).toBe("original-n8n");
   }, 15_000);
 
-  test("bootstrap with only HTTP entries: no file write, exit 0", async () => {
+  test("bootstrap with only HTTP entries: converts and writes file", async () => {
     const homeDir = await makeTempDir();
     const configDir = await makeTempDir();
     const configPath = join(configDir, "services.json");
@@ -211,12 +214,15 @@ describe("bootstrap integration", () => {
 
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.stdout);
-    expect(output.added).toEqual([]);
-    expect(output.warnings.length).toBe(2);
+    expect(output.added).toContain("http-only");
+    expect(output.added).toContain("sse-only");
 
-    // File should NOT be created
+    // File SHOULD be created with http backends
     const exists = await Bun.file(configPath).exists();
-    expect(exists).toBe(false);
+    expect(exists).toBe(true);
+    const written = await Bun.file(configPath).json();
+    expect(written.services["http-only"].backend).toBe("http");
+    expect(written.services["sse-only"].backend).toBe("http");
   }, 15_000);
 
   test("bootstrap creates parent directory if needed", async () => {

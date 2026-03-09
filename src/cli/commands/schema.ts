@@ -3,7 +3,7 @@
  * Routes through daemon by default. Set MCP2CLI_NO_DAEMON=1 for direct connection.
  */
 import { loadConfig } from "../../config/index.ts";
-import { connectToService } from "../../connection/index.ts";
+import { connectToService, connectToHttpService } from "../../connection/index.ts";
 import { getSchemaViaDaemon } from "../../process/index.ts";
 import {
   parseDotNotation,
@@ -81,13 +81,10 @@ export const handleSchema: CommandHandler = async (args: string[]) => {
 
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
-  // Only stdio backend supported in v1
-  if (service.backend !== "stdio") {
-    throw new Error(`Backend "${service.backend}" not yet supported`);
-  }
-
-  // Connect and get schema
-  const connection = await connectToService(service);
+  // Connect and get schema (stdio or http)
+  const connection = service.backend === "http"
+    ? await connectToHttpService(service)
+    : await connectToService(service);
 
   try {
     const result = await getToolSchema(connection.client, toolName, serviceName);
