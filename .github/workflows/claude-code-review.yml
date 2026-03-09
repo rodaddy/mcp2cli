@@ -1,0 +1,45 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  claude-review:
+    if: |
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: [self-hosted, king-ng]
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    env:
+      ANTHROPIC_BASE_URL: http://10.71.20.53:4000
+      ANTHROPIC_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+      ANTHROPIC_MODEL: sonnet
+      ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet
+      ANTHROPIC_DEFAULT_OPUS_MODEL: opus
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: haiku
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@beta
+        with:
+          anthropic_api_key: ${{ secrets.LITELLM_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          model: "sonnet"
+          direct_prompt: |
+            Review this PR for the mcp2cli project (CLI bridge for MCP servers). Focus on:
+            1. Bugs and logic errors
+            2. Security issues -- this tool handles MCP server connections and user input
+            3. Resource leaks (unclosed connections, dangling readers, missing timeouts)
+            4. Missing error handling at system boundaries
+            5. TypeScript strictness (no any, proper null checks)
+          timeout_minutes: 10
