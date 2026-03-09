@@ -7,7 +7,7 @@ import {
 } from "../../invocation/index.ts";
 import { validationResultToCliError } from "../../validation/pipelines.ts";
 import { loadConfig } from "../../config/index.ts";
-import { connectToService, connectToHttpService } from "../../connection/index.ts";
+import { connectToService, connectToHttpService, connectToWebSocketService } from "../../connection/index.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { getToolSchema } from "../../schema/introspect.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";
@@ -158,10 +158,12 @@ export async function handleToolCall(args: string[]): Promise<void> {
 
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
-  // 4. Connect to MCP server (stdio or http)
+  // 4. Connect to MCP server (stdio, http, or websocket)
   const connection = service.backend === "http"
     ? await connectToHttpService(service)
-    : await connectToService(service);
+    : service.backend === "websocket"
+      ? await connectToWebSocketService(service)
+      : await connectToService(service);
 
   try {
     // Dry-run interception (inside try/finally so connection closes)

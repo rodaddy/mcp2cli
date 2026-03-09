@@ -67,6 +67,11 @@ export function printHelp(args?: string[]): void {
             description: "Search tool names and descriptions across cached services",
             usage: 'mcp2cli grep "pattern"',
           },
+          {
+            name: "batch",
+            description: "Execute multiple tool calls from NDJSON stdin",
+            usage: "echo '{\"service\":\"n8n\",\"tool\":\"n8n_list_workflows\",\"params\":{}}' | mcp2cli batch [--parallel]",
+          },
         ],
         examples: [
           "mcp2cli services",
@@ -74,6 +79,7 @@ export function printHelp(args?: string[]): void {
           "mcp2cli n8n n8n_list_workflows",
           "mcp2cli schema n8n.n8n_list_workflows",
           'mcp2cli n8n n8n_create_workflow --params \'{"name": "test"}\'',
+          'echo \'{"service":"n8n","tool":"n8n_list_workflows","params":{}}\' | mcp2cli batch',
         ],
       }),
     );
@@ -93,6 +99,7 @@ export function printHelp(args?: string[]): void {
       "    generate-skills   Generate skill files from service schemas",
       "    cache             Manage schema cache (clear, status)",
       '    grep             Search tool names/descriptions across cached services',
+      "    batch            Execute multiple tool calls from NDJSON stdin",
       "",
       "EXAMPLES:",
       "    mcp2cli services",

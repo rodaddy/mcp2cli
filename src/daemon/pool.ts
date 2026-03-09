@@ -4,10 +4,10 @@
  * MEM-04: Bounded pool size (default 50, configurable via MCP2CLI_POOL_MAX).
  * MEM-05: Health check before reuse -- stale connections are replaced.
  */
-import { connectToService, connectToHttpService } from "../connection/index.ts";
+import { connectToService, connectToHttpService, connectToWebSocketService } from "../connection/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import type { McpConnection } from "../connection/types.ts";
-import type { ServicesConfig, HttpService } from "../config/index.ts";
+import type { ServicesConfig, HttpService, WebSocketService } from "../config/index.ts";
 import { createLogger } from "../logger/index.ts";
 import { checkDriftOnConnect } from "./drift-hook.ts";
 import { extractPolicy } from "../access/filter.ts";
@@ -102,6 +102,8 @@ export class ConnectionPool {
     let connectFn: () => Promise<McpConnection>;
     if (serviceConfig.backend === "http") {
       connectFn = () => this.connectHttpWithFallback(serviceName, serviceConfig);
+    } else if (serviceConfig.backend === "websocket") {
+      connectFn = () => this.connectWebSocketWithFallback(serviceName, serviceConfig);
     } else if (serviceConfig.backend === "stdio") {
       connectFn = () => connectToService(serviceConfig);
     } else {
@@ -163,6 +165,72 @@ export class ConnectionPool {
   /** Names of all connected services. */
   get serviceNames(): string[] {
     return Array.from(this.connections.keys());
+  }
+
+  /**
+   * Connect to a WebSocket service with circuit breaker and stdio fallback.
+   * Mirrors the HTTP fallback pattern for consistency.
+   */
+  private async connectWebSocketWithFallback(
+    serviceName: string,
+    serviceConfig: WebSocketService,
+  ): Promise<McpConnection> {
+    const hasFallback = !!serviceConfig.fallback;
+    const attemptWs = await shouldAttemptHttp(serviceName);
+
+    if (!attemptWs) {
+      if (hasFallback) {
+        log.warn("fallback_circuit_open", {
+          service: serviceName,
+          url: serviceConfig.url,
+        });
+        return this.connectWsFallback(serviceName, serviceConfig);
+      }
+      throw new ConnectionError(
+        `Circuit breaker open for ${serviceName} and no fallback configured`,
+        `url: ${serviceConfig.url}`,
+      );
+    }
+
+    try {
+      const connection = await connectToWebSocketService(serviceConfig);
+      await recordSuccess(serviceName);
+      return connection;
+    } catch (err) {
+      await recordFailure(serviceName);
+      const message = err instanceof Error ? err.message : String(err);
+
+      if (hasFallback) {
+        log.warn("fallback_ws_failed", {
+          service: serviceName,
+          url: serviceConfig.url,
+          error: message,
+        });
+        return this.connectWsFallback(serviceName, serviceConfig);
+      }
+
+      throw err;
+    }
+  }
+
+  /**
+   * Connect via the stdio fallback defined in a WebSocket service config.
+   */
+  private async connectWsFallback(
+    serviceName: string,
+    serviceConfig: WebSocketService,
+  ): Promise<McpConnection> {
+    const fb = serviceConfig.fallback!;
+    log.warn("using_stdio_fallback", {
+      service: serviceName,
+      command: fb.command,
+    });
+    return connectToService({
+      backend: "stdio" as const,
+      command: fb.command,
+      args: fb.args,
+      env: fb.env,
+    });
   }
 
   /**

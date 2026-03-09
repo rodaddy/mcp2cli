@@ -49,12 +49,27 @@ export const HttpServiceSchema = z.object({
 });
 
 /**
+ * WebSocket-based MCP service configuration.
+ * Connects to a remote MCP server over WebSocket.
+ * Optional fallback launches a local stdio process when the server is unreachable.
+ */
+export const WebSocketServiceSchema = z.object({
+  description: z.string().optional(),
+  backend: z.literal("websocket"),
+  url: z.string().url(),
+  headers: z.record(z.string(), z.string()).optional().default({}),
+  fallback: StdioFallbackSchema.optional(),
+  ...accessControlFields,
+});
+
+/**
  * Discriminated union of all supported service backends.
  * The "backend" field determines which schema variant applies.
  */
 export const ServiceSchema = z.discriminatedUnion("backend", [
   StdioServiceSchema,
   HttpServiceSchema,
+  WebSocketServiceSchema,
 ]);
 
 /**
@@ -73,5 +88,6 @@ export const ServicesConfigSchema = z.object({
 export type StdioService = z.infer<typeof StdioServiceSchema>;
 export type StdioFallback = z.infer<typeof StdioFallbackSchema>;
 export type HttpService = z.infer<typeof HttpServiceSchema>;
+export type WebSocketService = z.infer<typeof WebSocketServiceSchema>;
 export type ServiceConfig = z.infer<typeof ServiceSchema>;
 export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;

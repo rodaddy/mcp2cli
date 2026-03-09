@@ -3,6 +3,7 @@ import { loadConfig, getConfigPath } from "../../config/index.ts";
 import { ConfigError } from "../../config/errors.ts";
 import { connectToService } from "../../connection/client.ts";
 import { connectToHttpService } from "../../connection/http-transport.ts";
+import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { listToolsForService, getToolSchema } from "../../schema/introspect.ts";
 import {
   detectPrefixGroups,
@@ -183,10 +184,12 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     return;
   }
 
-  // Connect to MCP server (stdio or http)
+  // Connect to MCP server (stdio, http, or websocket)
   const connection = service.backend === "http"
     ? await connectToHttpService(service)
-    : await connectToService(service);
+    : service.backend === "websocket"
+      ? await connectToWebSocketService(service)
+      : await connectToService(service);
 
   try {
     // List all tools

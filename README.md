@@ -308,6 +308,55 @@ mcp2cli grep "delete|remove"
 
 This searches cached schemas only -- no MCP connections are made.
 
+### WebSocket Transport
+
+Connect to MCP servers over WebSocket. Supports optional stdio fallback and access control, same as HTTP.
+
+```json
+{
+  "services": {
+    "remote-mcp": {
+      "description": "Remote MCP server via WebSocket",
+      "backend": "websocket",
+      "url": "ws://mcp-gateway.local:3000/mcp",
+      "fallback": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/n8n-mcp"]
+      }
+    }
+  }
+}
+```
+
+WebSocket services benefit from the same circuit breaker and fallback behavior as HTTP services.
+
+### Batch Tool Calls
+
+Execute multiple tool calls in a single invocation by piping NDJSON to `mcp2cli batch`. Each line is a JSON object with `service`, `tool`, and `params` fields:
+
+```bash
+# Sequential execution (default)
+cat <<EOF | mcp2cli batch
+{"service": "n8n", "tool": "n8n_list_workflows", "params": {}}
+{"service": "n8n", "tool": "n8n_get_workflow", "params": {"id": "1"}}
+EOF
+
+# Parallel execution
+cat <<EOF | mcp2cli batch --parallel
+{"service": "n8n", "tool": "n8n_list_workflows", "params": {}}
+{"service": "n8n", "tool": "n8n_get_workflow", "params": {"id": "1"}}
+EOF
+```
+
+Output is NDJSON -- one result per line with the original service/tool for correlation:
+
+```json
+{"service":"n8n","tool":"n8n_list_workflows","success":true,"result":{...}}
+{"service":"n8n","tool":"n8n_get_workflow","success":true,"result":{...}}
+```
+
+Errors for individual calls are reported inline without aborting the batch.
+
 ### Gateway Resilience
 
 HTTP/SSE services can define a `fallback` stdio config. If the remote gateway is unreachable, mcp2cli transparently falls back to a local MCP server process.

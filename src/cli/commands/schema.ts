@@ -5,7 +5,7 @@
  * Supports --fresh flag to bypass cache for one call.
  */
 import { loadConfig } from "../../config/index.ts";
-import { connectToService, connectToHttpService } from "../../connection/index.ts";
+import { connectToService, connectToHttpService, connectToWebSocketService } from "../../connection/index.ts";
 import { getSchemaViaDaemon } from "../../process/index.ts";
 import {
   parseDotNotation,
@@ -141,10 +141,12 @@ export const handleSchema: CommandHandler = async (args: string[]) => {
 
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
-  // Connect and get schema (stdio or http)
+  // Connect and get schema (stdio, http, or websocket)
   const connection = service.backend === "http"
     ? await connectToHttpService(service)
-    : await connectToService(service);
+    : service.backend === "websocket"
+      ? await connectToWebSocketService(service)
+      : await connectToService(service);
 
   try {
     const result = await getToolSchema(connection.client, toolName, serviceName);
