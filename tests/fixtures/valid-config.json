@@ -1,0 +1,13 @@
+{
+  "services": {
+    "n8n": {
+      "description": "n8n workflow automation (MCP bridge)",
+      "backend": "stdio",
+      "command": "npx",
+      "args": ["-y", "n8n-mcp"],
+      "env": {
+        "N8N_API_URL": "http://localhost:5678"
+      }
+    }
+  }
+}

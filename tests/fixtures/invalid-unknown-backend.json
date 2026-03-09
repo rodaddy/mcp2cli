@@ -1,0 +1,8 @@
+{
+  "services": {
+    "broken": {
+      "backend": "grpc",
+      "endpoint": "localhost:50051"
+    }
+  }
+}

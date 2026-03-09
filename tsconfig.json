@@ -1,0 +1,10 @@
+{
+  "extends": "@tsconfig/bun/tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["src/cli/commands/bootstrap.ts", "tests/cli/bootstrap.test.ts"]
+}

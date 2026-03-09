@@ -1,0 +1,10 @@
+{
+  "services": {
+    "n8n": {
+      "backend": "stdio",
+      "command": "bun",
+      "args": ["tests/fixtures/mock-mcp-server.ts"],
+      "description": "Mock n8n MCP server for testing"
+    }
+  }
+}

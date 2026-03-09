@@ -1,0 +1,8 @@
+{
+  "services": {
+    "broken": {
+      "backend": "http",
+      "url": "not-a-url"
+    }
+  }
+}

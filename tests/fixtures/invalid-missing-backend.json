@@ -1,0 +1,8 @@
+{
+  "services": {
+    "broken": {
+      "command": "npx",
+      "args": ["some-tool"]
+    }
+  }
+}

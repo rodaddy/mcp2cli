@@ -1,0 +1,21 @@
+{
+  "services": {
+    "n8n": {
+      "description": "n8n workflow automation (MCP bridge)",
+      "backend": "stdio",
+      "command": "npx",
+      "args": ["-y", "n8n-mcp"],
+      "env": {
+        "N8N_API_URL": "http://localhost:5678"
+      }
+    },
+    "vault": {
+      "description": "Vault secrets manager",
+      "backend": "http",
+      "url": "http://localhost:3001/mcp",
+      "headers": {
+        "Authorization": "Bearer test-token"
+      }
+    }
+  }
+}
