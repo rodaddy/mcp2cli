@@ -5,7 +5,8 @@
  * Supports --fresh flag to bypass cache for one call.
  */
 import { loadConfig } from "../../config/index.ts";
-import { connectToService, connectToHttpService, connectToWebSocketService } from "../../connection/index.ts";
+import { connectToService, connectToHttpService } from "../../connection/index.ts";
+import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { getSchemaViaDaemon } from "../../process/index.ts";
 import {
   parseDotNotation,

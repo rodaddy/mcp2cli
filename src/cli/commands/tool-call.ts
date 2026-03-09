@@ -7,7 +7,8 @@ import {
 } from "../../invocation/index.ts";
 import { validationResultToCliError } from "../../validation/pipelines.ts";
 import { loadConfig } from "../../config/index.ts";
-import { connectToService, connectToHttpService, connectToWebSocketService } from "../../connection/index.ts";
+import { connectToService, connectToHttpService } from "../../connection/index.ts";
+import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { getToolSchema } from "../../schema/introspect.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";

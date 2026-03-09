@@ -145,11 +145,6 @@ describe("ServicesConfig with websocket backend", () => {
 });
 
 describe("WebSocket transport module imports", () => {
-  test("connectToWebSocketService is exported from connection index", async () => {
-    const mod = await import("../../src/connection/index.ts");
-    expect(typeof mod.connectToWebSocketService).toBe("function");
-  });
-
   test("connectToWebSocketService function exists in websocket-transport module", async () => {
     const mod = await import("../../src/connection/websocket-transport.ts");
     expect(typeof mod.connectToWebSocketService).toBe("function");
