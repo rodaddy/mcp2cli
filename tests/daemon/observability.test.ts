@@ -58,6 +58,7 @@ mock.module("../../src/connection/index.ts", () => ({
 const { ConnectionPool } = await import("../../src/daemon/pool.ts");
 const { createDaemonServer } = await import("../../src/daemon/server.ts");
 const { IdleTimer } = await import("../../src/daemon/idle.ts");
+const { MetricsCollector } = await import("../../src/daemon/metrics.ts");
 
 const testConfig = {
   services: {
@@ -107,11 +108,13 @@ describe("Daemon Observability", () => {
     const socketPath = join(tempDir, `test-${Date.now()}.sock`);
     const idleTimer = new IdleTimer(60000, () => {});
     const server = createDaemonServer({
-      socketPath,
+      listenConfig: { mode: "unix", socketPath },
       pool,
       config: testConfig,
       idleTimer,
       onShutdown: () => {},
+      authToken: undefined,
+      metrics: new MetricsCollector(),
     });
     servers.push(server);
     return server;

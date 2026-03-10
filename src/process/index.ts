@@ -7,5 +7,6 @@ export {
   getDaemonStatus,
   isDaemonAlive,
   cleanStaleDaemon,
+  checkRemoteHealth,
 } from "./liveness.ts";
 export type { DaemonStatus } from "./types.ts";

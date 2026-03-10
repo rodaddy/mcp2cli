@@ -422,6 +422,154 @@ In addition to the variables listed above, v1.3 adds:
 |----------|---------|-------------|
 | `MCP2CLI_CACHE_DIR` | `~/.cache/mcp2cli` | Base directory for schema cache and circuit breaker state |
 
+## Network Deployment
+
+mcp2cli can run as a centralized TCP daemon, allowing multiple machines to share a single set of MCP server connections. Install and configure MCP backends once on a server, then connect from any machine using the CLI client or the bash wrapper (curl + jq only -- no Bun required).
+
+### Quick Start (TCP Mode)
+
+**Server** -- start the daemon with TCP binding:
+
+```bash
+export MCP2CLI_LISTEN_HOST=0.0.0.0
+export MCP2CLI_LISTEN_PORT=9500
+export MCP2CLI_AUTH_TOKEN=$(openssl rand -hex 32)
+MCP2CLI_DAEMON=1 mcp2cli
+```
+
+**Client** -- point any machine at the remote daemon:
+
+```bash
+export MCP2CLI_REMOTE_URL=http://mcp-server.local:9500
+export MCP2CLI_AUTH_TOKEN=<same-token-as-server>
+mcp2cli n8n n8n_list_workflows --params '{}'
+```
+
+When `MCP2CLI_REMOTE_URL` is set, the CLI skips local daemon startup entirely and sends requests directly over HTTP.
+
+### Network Environment Variables
+
+In addition to the [base environment variables](#environment-variables), network mode adds:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP2CLI_LISTEN_HOST` | (unset) | Bind address for TCP mode. Setting this enables TCP instead of Unix socket. Use `0.0.0.0` to listen on all interfaces |
+| `MCP2CLI_LISTEN_PORT` | `9500` | TCP port when `MCP2CLI_LISTEN_HOST` is set |
+| `MCP2CLI_AUTH_TOKEN` | (unset) | Bearer token for TCP authentication. Required for production deployments |
+| `MCP2CLI_REMOTE_URL` | (unset) | URL of remote mcp2cli daemon (e.g. `http://mcp-server:9500`). Enables remote client mode |
+| `MCP2CLI_CONFIG` | `~/.config/mcp2cli/services.json` | Path to service definitions (useful for server-side config in `/etc/mcp2cli/`) |
+
+### Authentication
+
+When `MCP2CLI_AUTH_TOKEN` is set on the server, all requests must include a `Bearer` token in the `Authorization` header. The token comparison uses timing-safe equality to prevent timing attacks.
+
+**Auth-exempt paths** -- these skip authentication so load balancers and monitoring can probe without credentials:
+- `GET /health` -- health check with uptime, memory, and pool status
+- `GET /metrics` -- Prometheus metrics endpoint
+
+### Prometheus Metrics
+
+The daemon exposes metrics at `GET /metrics` in Prometheus text exposition format. Key metrics:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp2cli_requests_total` | counter | Total requests by `{service, tool}` |
+| `mcp2cli_requests_errors_total` | counter | Failed requests by `{service, tool}` |
+| `mcp2cli_request_duration_ms` | histogram | Request latency with buckets (10ms - 30s) |
+| `mcp2cli_requests_active` | gauge | Currently in-flight requests |
+| `mcp2cli_pool_connections_active` | gauge | Current connection pool size |
+| `mcp2cli_pool_services` | gauge | Connected services (`{service}` label) |
+| `mcp2cli_connection_events_total` | counter | Connect/disconnect/health-check-failure by `{service}` |
+| `mcp2cli_auth_failures_total` | counter | Total authentication failures |
+| `mcp2cli_process_uptime_seconds` | gauge | Daemon uptime |
+| `mcp2cli_process_memory_rss_bytes` | gauge | Resident set size |
+
+Add to your Prometheus config:
+
+```yaml
+scrape_configs:
+  - job_name: mcp2cli
+    static_configs:
+      - targets: ['mcp-server.local:9500']
+```
+
+### Bash Wrapper (curl-only clients)
+
+For machines that only have `curl` and `jq` (no Bun runtime), use the bash wrapper:
+
+```bash
+# Install the wrapper
+cp scripts/mcp2cli-remote /usr/local/bin/
+chmod +x /usr/local/bin/mcp2cli-remote
+
+# Configure
+export MCP2CLI_REMOTE_URL=http://mcp-server.local:9500
+export MCP2CLI_AUTH_TOKEN=<token>
+
+# Use it like the full CLI
+mcp2cli-remote n8n n8n_list_workflows '{}'
+```
+
+### LXC Deployment
+
+The `deploy/` directory contains everything needed to run mcp2cli as a systemd service in an LXC container (or any Linux host):
+
+| File | Purpose |
+|------|---------|
+| `deploy/mcp2cli.service` | systemd unit file (hardened with `NoNewPrivileges`, `ProtectSystem=strict`) |
+| `deploy/env.example` | Environment file template -- copy to `/etc/mcp2cli/env` |
+| `deploy/services-server.json` | Example server-side service config |
+
+Setup:
+
+```bash
+# Copy files into place
+cp deploy/mcp2cli.service /etc/systemd/system/
+mkdir -p /etc/mcp2cli
+cp deploy/env.example /etc/mcp2cli/env
+cp deploy/services-server.json /etc/mcp2cli/services.json
+
+# Edit config
+vim /etc/mcp2cli/env           # set MCP2CLI_AUTH_TOKEN
+vim /etc/mcp2cli/services.json  # configure your MCP backends
+
+# Enable and start
+useradd --system --no-create-home mcp2cli
+systemctl daemon-reload
+systemctl enable --now mcp2cli
+```
+
+### curl Examples
+
+```bash
+SERVER=http://mcp-server.local:9500
+TOKEN=your-token-here
+
+# Health check (no auth required)
+curl -s $SERVER/health | jq .
+
+# Prometheus metrics (no auth required)
+curl -s $SERVER/metrics
+
+# List tools for a service
+curl -s -X POST $SERVER/list-tools \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"service": "n8n"}' | jq .
+
+# Invoke a tool
+curl -s -X POST $SERVER/call \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"service": "n8n", "tool": "n8n_list_workflows", "params": {}}' | jq .
+
+# Get a tool schema
+curl -s -X POST $SERVER/schema \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"service": "n8n", "tool": "n8n_list_workflows"}' | jq .
+```
+
 ## Development
 
 ```bash

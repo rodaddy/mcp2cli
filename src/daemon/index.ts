@@ -2,15 +2,18 @@
  * Daemon entry point.
  * Starts the long-running daemon process with PID file, idle timer,
  * connection pool, and signal handlers for graceful shutdown.
+ * Supports both Unix socket (local) and TCP (network) listen modes.
  */
 import { mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import { getDaemonPaths } from "./paths.ts";
+import { getDaemonPaths, getDaemonListenConfig } from "./paths.ts";
 import { ConnectionPool } from "./pool.ts";
 import { IdleTimer } from "./idle.ts";
 import { createDaemonServer } from "./server.ts";
 import { loadConfig } from "../config/index.ts";
 import { createLogger } from "../logger/index.ts";
+import { loadAuthToken } from "./auth.ts";
+import { MetricsCollector } from "./metrics.ts";
 
 const log = createLogger("daemon");
 
@@ -19,34 +22,60 @@ const DEFAULT_IDLE_TIMEOUT_S = 60;
 /**
  * Start the daemon process.
  * Creates PID file, loads config, starts connection pool and HTTP server.
+ * In TCP mode: disables idle timer, skips PID/socket file management.
  */
 export async function startDaemon(): Promise<void> {
-  const paths = getDaemonPaths();
+  const listenConfig = getDaemonListenConfig();
+  const isTcp = listenConfig.mode === "tcp";
 
-  // Ensure runtime directory exists
-  await mkdir(dirname(paths.pidFile), { recursive: true });
-  await mkdir(dirname(paths.socketPath), { recursive: true });
+  // Unix mode: manage PID and socket files
+  let paths: ReturnType<typeof getDaemonPaths> | null = null;
+  if (!isTcp) {
+    paths = getDaemonPaths();
 
-  // Clean up stale socket/pid from previous crash
-  await unlink(paths.socketPath).catch(() => {});
-  await unlink(paths.pidFile).catch(() => {});
+    // Ensure runtime directory exists
+    await mkdir(dirname(paths.pidFile), { recursive: true });
+    await mkdir(dirname(paths.socketPath), { recursive: true });
 
-  // Write PID file
-  await Bun.write(paths.pidFile, String(process.pid) + "\n");
-  log.info("daemon starting", { pid: process.pid, socket: paths.socketPath });
+    // Clean up stale socket/pid from previous crash
+    await unlink(paths.socketPath).catch(() => {});
+    await unlink(paths.pidFile).catch(() => {});
+
+    // Write PID file
+    await Bun.write(paths.pidFile, String(process.pid) + "\n");
+    log.info("daemon starting", { pid: process.pid, socket: paths.socketPath });
+  } else {
+    log.info("daemon starting", {
+      pid: process.pid,
+      mode: "tcp",
+      host: listenConfig.hostname,
+      port: listenConfig.port,
+    });
+  }
 
   // Load service configuration
   const config = await loadConfig();
 
-  // Create connection pool
+  // Load auth token
+  const authToken = loadAuthToken();
+  if (isTcp && !authToken) {
+    log.warn("no_auth_token", {
+      message: "TCP mode without MCP2CLI_AUTH_TOKEN -- daemon is unauthenticated",
+    });
+  }
+
+  // Create connection pool and metrics collector
   const pool = new ConnectionPool();
+  const metrics = new MetricsCollector();
 
   // Parse idle timeout from env (seconds -> ms)
+  // TCP mode: default to 0 (disabled) since it's a long-running network service
+  const defaultTimeout = isTcp ? 0 : DEFAULT_IDLE_TIMEOUT_S;
   const idleTimeoutS = parseInt(
-    process.env.MCP2CLI_IDLE_TIMEOUT ?? String(DEFAULT_IDLE_TIMEOUT_S),
+    process.env.MCP2CLI_IDLE_TIMEOUT ?? String(defaultTimeout),
     10,
   );
-  const idleTimeoutMs = (Number.isNaN(idleTimeoutS) ? DEFAULT_IDLE_TIMEOUT_S : idleTimeoutS) * 1000;
+  const idleTimeoutMs = (Number.isNaN(idleTimeoutS) ? defaultTimeout : idleTimeoutS) * 1000;
 
   // Graceful shutdown function
   let isShuttingDown = false;
@@ -67,9 +96,11 @@ export async function startDaemon(): Promise<void> {
       // Close all MCP connections (reuses McpTransport.close() multi-step shutdown)
       await pool.closeAll();
 
-      // Remove socket and PID files
-      await unlink(paths.socketPath).catch(() => {});
-      await unlink(paths.pidFile).catch(() => {});
+      // Unix mode: remove socket and PID files
+      if (paths) {
+        await unlink(paths.socketPath).catch(() => {});
+        await unlink(paths.pidFile).catch(() => {});
+      }
 
       clearTimeout(forceTimer);
       process.exit(0);
@@ -79,20 +110,22 @@ export async function startDaemon(): Promise<void> {
     }
   };
 
-  // Create idle timer
+  // Create idle timer (disabled when timeoutMs is 0)
   const idleTimer = new IdleTimer(idleTimeoutMs, () => {
     void gracefulShutdown();
   });
 
   // Create and start server
   const server = createDaemonServer({
-    socketPath: paths.socketPath,
+    listenConfig,
     pool,
     config,
     idleTimer,
     onShutdown: () => {
       void gracefulShutdown();
     },
+    authToken,
+    metrics,
   });
 
   // Install signal handlers
@@ -100,6 +133,8 @@ export async function startDaemon(): Promise<void> {
   process.on("SIGINT", () => void gracefulShutdown());
   process.on("SIGHUP", () => void gracefulShutdown());
 
-  // Start first idle countdown
-  idleTimer.touch();
+  // Start first idle countdown (only if idle timer is enabled)
+  if (idleTimeoutMs > 0) {
+    idleTimer.touch();
+  }
 }

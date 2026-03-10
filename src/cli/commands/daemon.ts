@@ -2,8 +2,12 @@
  * Daemon management commands: stop and status.
  * Provides CLI control over the background daemon process.
  */
-import { getDaemonPaths } from "../../daemon/paths.ts";
-import { getDaemonStatus, cleanStaleDaemon } from "../../process/index.ts";
+import { getDaemonPaths, getRemoteConfig } from "../../daemon/paths.ts";
+import {
+  getDaemonStatus,
+  cleanStaleDaemon,
+  checkRemoteHealth,
+} from "../../process/index.ts";
 
 /**
  * Handle `mcp2cli daemon stop` -- stop the running daemon.
@@ -41,9 +45,22 @@ export async function handleDaemonStop(_args: string[]): Promise<void> {
 
 /**
  * Handle `mcp2cli daemon status` -- report daemon status.
- * Checks PID file, process liveness, and health endpoint.
+ * Checks remote daemon if MCP2CLI_REMOTE_URL is set,
+ * otherwise checks PID file, process liveness, and health endpoint.
  */
 export async function handleDaemonStatus(_args: string[]): Promise<void> {
+  // Remote mode -- check remote daemon health and return early
+  const remote = getRemoteConfig();
+  if (remote) {
+    const result = await checkRemoteHealth(remote.url, remote.token);
+    if (result.status === "ok") {
+      console.log(JSON.stringify({ status: "remote", url: remote.url, ...result.data as object }));
+    } else {
+      console.log(JSON.stringify({ status: "unreachable", url: remote.url }));
+    }
+    return;
+  }
+
   const paths = getDaemonPaths();
   const status = await getDaemonStatus(paths);
 

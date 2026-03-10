@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# mcp2cli-remote -- thin curl/jq wrapper for remote mcp2cli daemons.
+# Use on machines without the binary installed.
+set -euo pipefail
+
+if [[ -z "${MCP2CLI_REMOTE_URL:-}" ]]; then
+  echo "error: MCP2CLI_REMOTE_URL is not set" >&2
+  exit 1
+fi
+
+BASE_URL="${MCP2CLI_REMOTE_URL%/}"
+AUTH_HEADER=""
+if [[ -n "${MCP2CLI_AUTH_TOKEN:-}" ]]; then
+  AUTH_HEADER="Authorization: Bearer ${MCP2CLI_AUTH_TOKEN}"
+fi
+
+curl_opts=(-s -f --max-time 30)
+if [[ -n "$AUTH_HEADER" ]]; then
+  curl_opts+=(-H "$AUTH_HEADER")
+fi
+
+case "${1:-}" in
+  --help|-h|help)
+    cat <<'USAGE'
+Usage: mcp2cli-remote <service> <tool> --params '{...}'
+       mcp2cli-remote health
+
+Environment:
+  MCP2CLI_REMOTE_URL   Remote daemon URL (required)
+  MCP2CLI_AUTH_TOKEN    Bearer token for auth (optional)
+
+Commands:
+  health                Check remote daemon health
+  <service> <tool>      Invoke an MCP tool on the remote daemon
+    --params '{}'       JSON parameters for the tool call
+USAGE
+    exit 0
+    ;;
+  health)
+    curl "${curl_opts[@]}" -H "Content-Type: application/json" \
+      "${BASE_URL}/health" | jq .
+    exit $?
+    ;;
+  "")
+    echo "error: no command specified. Use --help for usage." >&2
+    exit 1
+    ;;
+esac
+
+SERVICE="$1"
+TOOL="${2:-}"
+if [[ -z "$TOOL" ]]; then
+  echo "error: tool name required. Usage: mcp2cli-remote <service> <tool> --params '{...}'" >&2
+  exit 1
+fi
+shift 2
+
+PARAMS="{}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --params)
+      PARAMS="${2:-{}}"
+      shift 2
+      ;;
+    *)
+      echo "error: unknown flag: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+BODY=$(jq -n --arg s "$SERVICE" --arg t "$TOOL" --argjson p "$PARAMS" \
+  '{service: $s, tool: $t, params: $p}')
+
+curl "${curl_opts[@]}" \
+  -H "Content-Type: application/json" \
+  -X POST \
+  -d "$BODY" \
+  "${BASE_URL}/call" | jq .

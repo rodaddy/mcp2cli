@@ -1,0 +1,30 @@
+{
+  "_doc": "Server-side MCP service configuration for network deployment",
+  "services": {
+    "n8n": {
+      "_comment": "n8n workflow automation via stdio",
+      "backend": "stdio",
+      "command": "npx",
+      "args": ["-y", "@n8n/n8n-mcp"],
+      "env": { "N8N_HOST": "http://your-n8n:5678", "N8N_API_KEY": "${N8N_API_KEY}" }
+    },
+    "vaultwarden-secrets": {
+      "_comment": "Vaultwarden via HTTP",
+      "backend": "http",
+      "url": "http://your-vaultwarden:3001/mcp"
+    },
+    "notebooklm-mcp": {
+      "_comment": "NotebookLM via stdio (uvx)",
+      "backend": "stdio",
+      "command": "uvx",
+      "args": ["notebooklm-mcp"],
+      "env": {}
+    },
+    "homekit": {
+      "_comment": "HomeKit bridge -- fallback if unreachable",
+      "backend": "http",
+      "url": "http://your-mac:9234/mcp",
+      "fallback": { "command": "echo", "args": ["homekit not reachable"] }
+    }
+  }
+}

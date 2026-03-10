@@ -1,12 +1,13 @@
 /**
  * CLI-side daemon communication client.
  * Starts the daemon if needed, sends requests over Unix socket.
+ * Supports remote daemon connections via MCP2CLI_REMOTE_URL.
  */
 import { mkdir, stat, unlink } from "node:fs/promises";
 import { open } from "node:fs/promises";
 import { dirname } from "node:path";
 import { constants } from "node:fs";
-import { getDaemonPaths } from "../daemon/paths.ts";
+import { getDaemonPaths, getRemoteConfig } from "../daemon/paths.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { getDaemonStatus, cleanStaleDaemon } from "./liveness.ts";
 import type { DaemonPaths } from "../daemon/types.ts";
@@ -146,33 +147,68 @@ export async function ensureDaemon(paths: DaemonPaths): Promise<void> {
 }
 
 /**
+ * Shared fetch helper that routes to remote or local daemon.
+ * - Remote: uses MCP2CLI_REMOTE_URL with Bearer token, skips ensureDaemon()
+ * - Local: ensures daemon is running, fetches via Unix socket
+ */
+async function fetchDaemon(
+  path: string,
+  body?: unknown,
+): Promise<DaemonResponse> {
+  const remote = getRemoteConfig();
+
+  try {
+    let response: Response;
+
+    if (remote) {
+      // Remote mode -- direct HTTP to remote daemon
+      const url = `${remote.url.replace(/\/$/, "")}${path}`;
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (remote.token) {
+        headers["Authorization"] = `Bearer ${remote.token}`;
+      }
+      response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } else {
+      // Local mode -- Unix socket
+      const paths = getDaemonPaths();
+      await ensureDaemon(paths);
+      response = await fetch(`http://localhost${path}`, {
+        unix: paths.socketPath,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    }
+
+    return (await response.json()) as DaemonResponse;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const target = remote ? `remote daemon at ${remote.url}` : "daemon";
+    return {
+      success: false,
+      error: {
+        code: "CONNECTION_ERROR",
+        message: `Failed to communicate with ${target}: ${message}`,
+      },
+    };
+  }
+}
+
+/**
  * Send a tool call request to the daemon.
  */
 export async function callViaDaemon(
   request: DaemonCallRequest,
 ): Promise<DaemonResponse> {
-  const paths = getDaemonPaths();
-  await ensureDaemon(paths);
-
-  try {
-    const response = await fetch("http://localhost/call", {
-      unix: paths.socketPath,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    return (await response.json()) as DaemonResponse;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      error: {
-        code: "CONNECTION_ERROR",
-        message: `Failed to communicate with daemon: ${message}`,
-      },
-    };
-  }
+  return fetchDaemon("/call", request);
 }
 
 /**
@@ -181,28 +217,7 @@ export async function callViaDaemon(
 export async function listToolsViaDaemon(
   request: DaemonListToolsRequest,
 ): Promise<DaemonResponse> {
-  const paths = getDaemonPaths();
-  await ensureDaemon(paths);
-
-  try {
-    const response = await fetch("http://localhost/list-tools", {
-      unix: paths.socketPath,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    return (await response.json()) as DaemonResponse;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      error: {
-        code: "CONNECTION_ERROR",
-        message: `Failed to communicate with daemon: ${message}`,
-      },
-    };
-  }
+  return fetchDaemon("/list-tools", request);
 }
 
 /**
@@ -211,26 +226,5 @@ export async function listToolsViaDaemon(
 export async function getSchemaViaDaemon(
   request: DaemonSchemaRequest,
 ): Promise<DaemonResponse> {
-  const paths = getDaemonPaths();
-  await ensureDaemon(paths);
-
-  try {
-    const response = await fetch("http://localhost/schema", {
-      unix: paths.socketPath,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    return (await response.json()) as DaemonResponse;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      error: {
-        code: "CONNECTION_ERROR",
-        message: `Failed to communicate with daemon: ${message}`,
-      },
-    };
-  }
+  return fetchDaemon("/schema", request);
 }

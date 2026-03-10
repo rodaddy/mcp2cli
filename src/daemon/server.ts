@@ -1,6 +1,7 @@
 /**
- * Daemon HTTP server over Unix domain socket.
- * Handles /call, /list-tools, /schema, /health, /shutdown endpoints.
+ * Daemon HTTP server over Unix domain socket or TCP.
+ * Handles /call, /list-tools, /schema, /health, /metrics, /shutdown endpoints.
+ * Supports bearer token auth for TCP mode.
  */
 // Server type inferred from Bun.serve() return
 import type { ServicesConfig } from "../config/index.ts";
@@ -12,6 +13,7 @@ import type {
   DaemonSchemaRequest,
   DaemonCallResponse,
   DaemonErrorResponse,
+  DaemonListenConfig,
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
 import { listToolsForService, getToolSchema } from "../schema/introspect.ts";
@@ -19,16 +21,20 @@ import { ConnectionError } from "../connection/errors.ts";
 import { ToolError } from "../invocation/errors.ts";
 import type { ErrorCode } from "../types/index.ts";
 import { createLogger } from "../logger/index.ts";
+import { checkAuth, isAuthExempt } from "./auth.ts";
+import type { MetricsCollector } from "./metrics.ts";
 
 const log = createLogger("server");
 const reqLog = createLogger("daemon:request");
 
 interface DaemonServerOptions {
-  socketPath: string;
+  listenConfig: DaemonListenConfig;
   pool: ConnectionPool;
   config: ServicesConfig;
   idleTimer: IdleTimer;
   onShutdown: () => void;
+  authToken: string | undefined;
+  metrics: MetricsCollector;
 }
 
 function errorResponse(
@@ -45,26 +51,39 @@ function errorResponse(
 }
 
 /**
- * Create the daemon HTTP server bound to a Unix socket.
+ * Create the daemon HTTP server bound to a Unix socket or TCP port.
  * Returns the Bun.serve() server instance.
  */
 export function createDaemonServer(opts: DaemonServerOptions) {
-  const { socketPath, pool, config, idleTimer, onShutdown } = opts;
+  const { listenConfig, pool, config, idleTimer, onShutdown, authToken, metrics } = opts;
+
+  // Build listen options based on mode
+  const listenOpts = listenConfig.mode === "unix"
+    ? { unix: listenConfig.socketPath }
+    : { hostname: listenConfig.hostname, port: listenConfig.port };
 
   return Bun.serve({
-    unix: socketPath,
+    ...listenOpts,
 
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const path = url.pathname;
       log.debug("request received", { method: req.method, path });
 
+      // Auth check (exempt paths skip this)
+      if (!isAuthExempt(path) && !checkAuth(req, authToken)) {
+        metrics.onAuthFailure();
+        return errorResponse("AUTH_ERROR", "Unauthorized", undefined, 401);
+      }
+
       // POST /call -- invoke a tool
       if (path === "/call" && req.method === "POST") {
         idleTimer.onRequestStart();
+        metrics.onRequestStart();
         const startTime = performance.now();
         let callService = "unknown";
         let callTool = "unknown";
+        let success = false;
         try {
           const body = (await req.json()) as DaemonCallRequest;
           callService = body.service;
@@ -98,6 +117,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           const duration = Math.round(performance.now() - startTime);
           reqLog.info("tool_call", { service: callService, tool: callTool, duration, result: "success" });
+          success = true;
           const formatted = formatToolResult(
             sdkResult as Parameters<typeof formatToolResult>[0],
           );
@@ -116,6 +136,8 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           }
           return handleEndpointError(err, pool);
         } finally {
+          const duration = Math.round(performance.now() - startTime);
+          metrics.onRequestEnd(callService, callTool, success, duration);
           idleTimer.onRequestEnd();
         }
       }
@@ -162,7 +184,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         }
       }
 
-      // GET /health -- health check
+      // GET /health -- health check (auth-exempt)
       if (path === "/health" && req.method === "GET") {
         const mem = process.memoryUsage();
         return Response.json({
@@ -175,6 +197,14 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             heapUsed: mem.heapUsed,
             heapTotal: mem.heapTotal,
           },
+        });
+      }
+
+      // GET /metrics -- Prometheus metrics (auth-exempt)
+      if (path === "/metrics" && req.method === "GET") {
+        const body = metrics.render(pool.size, pool.serviceNames);
+        return new Response(body, {
+          headers: { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" },
         });
       }
 
