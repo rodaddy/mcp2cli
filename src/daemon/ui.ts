@@ -85,7 +85,7 @@ export function renderUI(): string {
   .toast.show { opacity: 1; }
   .toast-success { background: #238636; color: #fff; }
   .toast-error { background: #da3633; color: #fff; }
-  .hidden { display: none; }
+  .hidden { display: none !important; }
   .toolbar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
   .login-overlay {
     position: fixed; inset: 0; background: rgba(13,17,23,0.95);
@@ -269,6 +269,8 @@ export function renderUI(): string {
 let editMode = null; // null = add, string = editing service name
 let pollTimer = null;
 let currentRole = 'admin'; // updated after auth
+let authLock = false; // prevents api() 401 from re-showing login during transitions
+let authFailCount = 0; // consecutive auth failures before showing login
 
 // --- Auth token management ---
 function getToken() { return sessionStorage.getItem('mcp2cli_token'); }
@@ -277,7 +279,9 @@ function clearToken() { sessionStorage.removeItem('mcp2cli_token'); }
 function isAdmin() { return currentRole === 'admin'; }
 
 function showLogin(msg) {
+  if (authLock) return; // login in progress -- don't re-show overlay
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  authFailCount = 0;
   document.getElementById('loginOverlay').classList.remove('hidden');
   document.getElementById('loginError').textContent = msg || '';
   document.getElementById('tokenInput').value = '';
@@ -314,6 +318,7 @@ async function doLoginBasic() {
     return;
   }
   try {
+    authLock = true; // prevent api() 401 from re-showing login
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -321,6 +326,7 @@ async function doLoginBasic() {
     });
     const data = await res.json();
     if (!data.success) {
+      authLock = false;
       document.getElementById('loginError').textContent = data.error || 'Invalid credentials';
       return;
     }
@@ -330,9 +336,12 @@ async function doLoginBasic() {
     document.getElementById('logoutBtn').classList.remove('hidden');
     document.getElementById('authStatus').textContent = data.userId + ' (' + currentRole + ')';
     applyRoleUI();
-    refresh();
+    await refresh();
+    authLock = false;
+    authFailCount = 0;
     pollTimer = setInterval(refresh, 5000);
   } catch (e) {
+    authLock = false;
     document.getElementById('loginError').textContent = 'Connection error';
   }
 }
@@ -340,24 +349,33 @@ async function doLoginBasic() {
 async function doLogin() {
   const token = document.getElementById('tokenInput').value.trim();
   if (!token) { document.getElementById('loginError').textContent = 'Token required'; return; }
-  // Test the token against /api/services
-  const res = await fetch('/api/services', {
-    headers: { 'Authorization': 'Bearer ' + token },
-  });
-  if (res.status === 401) {
-    document.getElementById('loginError').textContent = 'Invalid token';
-    return;
+  try {
+    authLock = true;
+    // Test the token against /api/services
+    const res = await fetch('/api/services', {
+      headers: { 'Authorization': 'Bearer ' + token },
+    });
+    if (res.status === 401) {
+      authLock = false;
+      document.getElementById('loginError').textContent = 'Invalid token';
+      return;
+    }
+    setToken(token);
+    // Fetch role info
+    const me = await fetch('/api/auth/me', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json());
+    currentRole = me.role || 'viewer';
+    document.getElementById('loginOverlay').classList.add('hidden');
+    document.getElementById('logoutBtn').classList.remove('hidden');
+    document.getElementById('authStatus').textContent = me.userId + ' (' + currentRole + ')';
+    applyRoleUI();
+    await refresh();
+    authLock = false;
+    authFailCount = 0;
+    pollTimer = setInterval(refresh, 5000);
+  } catch (e) {
+    authLock = false;
+    document.getElementById('loginError').textContent = 'Connection error';
   }
-  setToken(token);
-  // Fetch role info
-  const me = await fetch('/api/auth/me', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json());
-  currentRole = me.role || 'viewer';
-  document.getElementById('loginOverlay').classList.add('hidden');
-  document.getElementById('logoutBtn').classList.remove('hidden');
-  document.getElementById('authStatus').textContent = me.userId + ' (' + currentRole + ')';
-  applyRoleUI();
-  refresh();
-  pollTimer = setInterval(refresh, 5000);
 }
 
 function doLogout() {
@@ -382,7 +400,16 @@ async function api(method, path, body) {
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch('/api' + path, opts);
-  if (res.status === 401) { showLogin('Session expired -- please sign in again'); throw new Error('Unauthorized'); }
+  if (res.status === 401) {
+    authFailCount++;
+    // Require 2 consecutive failures before showing login (guards against transient errors)
+    if (authFailCount >= 2) {
+      clearToken();
+      showLogin('Session expired -- please sign in again');
+    }
+    throw new Error('Unauthorized');
+  }
+  authFailCount = 0; // reset on any successful authed request
   return res.json();
 }
 
@@ -591,34 +618,38 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 
 // Initial load: check if auth is required
 (async function init() {
-  // Probe /api/services without token to see if auth is enforced
-  const probe = await fetch('/api/services');
-  if (probe.status === 401) {
-    // Auth required -- check sessionStorage for saved token
-    const saved = getToken();
-    if (saved) {
-      const recheck = await fetch('/api/services', {
-        headers: { 'Authorization': 'Bearer ' + saved },
-      });
-      if (recheck.status === 401) {
-        clearToken();
+  try {
+    // Probe /api/services without token to see if auth is enforced
+    const probe = await fetch('/api/services');
+    if (probe.status === 401) {
+      // Auth required -- check sessionStorage for saved token
+      const saved = getToken();
+      if (saved) {
+        const recheck = await fetch('/api/services', {
+          headers: { 'Authorization': 'Bearer ' + saved },
+        });
+        if (recheck.status === 401) {
+          clearToken();
+          showLogin('');
+          return;
+        }
+        // Token still valid -- fetch role
+        const me = await fetch('/api/auth/me', { headers: { 'Authorization': 'Bearer ' + saved } }).then(r => r.json());
+        currentRole = me.role || 'viewer';
+        document.getElementById('logoutBtn').classList.remove('hidden');
+        document.getElementById('authStatus').textContent = me.userId + ' (' + currentRole + ')';
+        applyRoleUI();
+      } else {
         showLogin('');
         return;
       }
-      // Token still valid -- fetch role
-      const me = await fetch('/api/auth/me', { headers: { 'Authorization': 'Bearer ' + saved } }).then(r => r.json());
-      currentRole = me.role || 'viewer';
-      document.getElementById('logoutBtn').classList.remove('hidden');
-      document.getElementById('authStatus').textContent = me.userId + ' (' + currentRole + ')';
-      applyRoleUI();
-    } else {
-      showLogin('');
-      return;
     }
+    // No auth or valid token -- go
+    refresh();
+    pollTimer = setInterval(refresh, 5000);
+  } catch (e) {
+    showLogin('Connection error -- please try again');
   }
-  // No auth or valid token -- go
-  refresh();
-  pollTimer = setInterval(refresh, 5000);
 })();
 </script>
 </body>
