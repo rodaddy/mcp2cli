@@ -35,6 +35,8 @@ function runCli(
     MCP2CLI_PID_FILE: join(tempDir, "daemon.pid"),
     MCP2CLI_SOCKET_PATH: join(tempDir, "daemon.sock"),
     MCP2CLI_IDLE_TIMEOUT: "2",
+    MCP2CLI_TOKENS_FILE: join(tempDir, "nonexistent-tokens.json"),
+    MCP2CLI_AUTH_TOKEN: "",
     ...extraEnv,
   };
 

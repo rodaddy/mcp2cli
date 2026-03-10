@@ -1,0 +1,31 @@
+{
+  "services": {
+    "n8n": {
+      "backend": "stdio",
+      "command": "npx",
+      "args": ["-y", "@n8n/n8n-mcp"],
+      "env": {
+        "N8N_HOST": "http://10.71.20.30:5678",
+        "N8N_API_KEY": "${N8N_API_KEY}"
+      }
+    },
+    "vaultwarden-secrets": {
+      "backend": "http",
+      "url": "http://10.71.20.14:3001/mcp"
+    },
+    "notebooklm-mcp": {
+      "backend": "stdio",
+      "command": "uvx",
+      "args": ["notebooklm-mcp"],
+      "env": {}
+    },
+    "homekit": {
+      "backend": "http",
+      "url": "http://10.71.1.69:9234/mcp",
+      "fallback": {
+        "command": "echo",
+        "args": ["homekit service not reachable"]
+      }
+    }
+  }
+}

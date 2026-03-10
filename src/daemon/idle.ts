@@ -15,6 +15,9 @@ export class IdleTimer {
 
   /** Reset the idle countdown. Starts a new timer from now. */
   touch(): void {
+    // timeoutMs === 0 means idle timer is disabled (e.g., TCP mode)
+    if (this.timeoutMs <= 0) return;
+
     if (this.timer !== null) {
       clearTimeout(this.timer);
     }

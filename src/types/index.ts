@@ -12,6 +12,7 @@ export type ErrorCode =
   | "TOOL_TIMEOUT"
   | "UNKNOWN_COMMAND"
   | "TOOL_BLOCKED"
+  | "AUTH_ERROR"
   | "INTERNAL_ERROR";
 
 /**

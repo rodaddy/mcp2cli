@@ -1,0 +1,21 @@
+[Unit]
+Description=mcp2cli MCP Bridge Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mcp2cli
+Group=mcp2cli
+EnvironmentFile=/etc/mcp2cli/env
+ExecStart=/usr/local/bin/mcp2cli
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mcp2cli /var/log/mcp2cli
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

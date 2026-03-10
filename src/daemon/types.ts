@@ -46,3 +46,19 @@ export interface DaemonErrorResponse {
 
 /** Discriminated union of all daemon responses */
 export type DaemonResponse = DaemonCallResponse | DaemonErrorResponse;
+
+/** Unix domain socket listen config */
+export interface UnixListenConfig {
+  mode: "unix";
+  socketPath: string;
+}
+
+/** TCP network listen config */
+export interface TcpListenConfig {
+  mode: "tcp";
+  hostname: string;
+  port: number;
+}
+
+/** Discriminated union for daemon listen mode */
+export type DaemonListenConfig = UnixListenConfig | TcpListenConfig;

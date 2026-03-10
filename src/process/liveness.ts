@@ -71,3 +71,29 @@ export async function cleanStaleDaemon(paths: DaemonPaths): Promise<void> {
   await unlink(paths.pidFile).catch(() => {});
   await unlink(paths.socketPath).catch(() => {});
 }
+
+/**
+ * Check health of a remote daemon via HTTP.
+ * Returns status "ok" with response data on success,
+ * or "unreachable" on any error.
+ */
+export async function checkRemoteHealth(
+  url: string,
+  token: string | undefined,
+): Promise<{ status: "ok" | "unreachable"; data?: unknown }> {
+  try {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    const response = await fetch(`${url.replace(/\/$/, "")}/health`, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(5000),
+    });
+    const data = await response.json();
+    return { status: "ok", data };
+  } catch {
+    return { status: "unreachable" };
+  }
+}
