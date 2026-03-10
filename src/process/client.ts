@@ -5,7 +5,7 @@
  */
 import { mkdir, stat, unlink } from "node:fs/promises";
 import { open } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { constants } from "node:fs";
 import { getDaemonPaths, getRemoteConfig } from "../daemon/paths.ts";
 import { ConnectionError } from "../connection/errors.ts";
@@ -22,6 +22,44 @@ const STARTUP_TIMEOUT_MS = 10_000;
 const STARTUP_POLL_MS = 50;
 const REQUEST_TIMEOUT_MS = 60_000;
 const STALE_LOCK_THRESHOLD_MS = 30_000;
+
+/** Cached local token to avoid re-reading tokens.json on every request. */
+let cachedLocalToken: string | undefined;
+let localTokenResolved = false;
+
+/**
+ * Resolve a bearer token for local Unix socket connections.
+ * Reads tokens.json and returns the first admin token.
+ * Falls back to MCP2CLI_AUTH_TOKEN env var.
+ * Caches the result for the process lifetime.
+ */
+async function getLocalToken(): Promise<string | undefined> {
+  if (localTokenResolved) return cachedLocalToken;
+  localTokenResolved = true;
+
+  // Check env var first
+  const envToken = process.env.MCP2CLI_AUTH_TOKEN;
+  if (envToken) {
+    cachedLocalToken = envToken;
+    return cachedLocalToken;
+  }
+
+  // Read tokens.json
+  const tokensPath = process.env.MCP2CLI_TOKENS_FILE
+    ?? join(process.env.HOME ?? "", ".config", "mcp2cli", "tokens.json");
+  try {
+    const file = Bun.file(tokensPath);
+    if (await file.exists()) {
+      const raw = await file.json() as { tokens?: Array<{ token: string; role: string }> };
+      // Use the first admin token for local socket auth
+      const adminEntry = raw.tokens?.find((t) => t.role === "admin");
+      cachedLocalToken = adminEntry?.token;
+    }
+  } catch {
+    // tokens.json missing or malformed -- auth may be disabled
+  }
+  return cachedLocalToken;
+}
 
 /**
  * Start the daemon as a background process.
@@ -179,10 +217,17 @@ async function fetchDaemon(
       // Local mode -- Unix socket
       const paths = getDaemonPaths();
       await ensureDaemon(paths);
+      const localHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      const localToken = await getLocalToken();
+      if (localToken) {
+        localHeaders["Authorization"] = `Bearer ${localToken}`;
+      }
       response = await fetch(`http://localhost${path}`, {
         unix: paths.socketPath,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: localHeaders,
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });

@@ -26,6 +26,14 @@ function sanitizeForFilename(cmd: string): string {
   return cmd.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 64);
 }
 
+/**
+ * Expand ${VAR} references in a string using the provided env map.
+ * Supports ${VAR} syntax only (not $VAR without braces).
+ */
+function expandEnvVars(s: string, env: Record<string, string | undefined>): string {
+  return s.replace(/\$\{([^}]+)\}/g, (_match, name: string) => env[name] ?? "");
+}
+
 /** Maximum line buffer size (1MB). Prevents unbounded growth from servers that emit data without newlines. */
 const MAX_LINE_BUFFER = 1024 * 1024;
 
@@ -69,11 +77,14 @@ export class McpTransport implements Transport {
     }
 
     try {
-      this.proc = Bun.spawn([this.options.command, ...this.options.args], {
+      // Merge env and expand ${VAR} references in args (Bun.spawn doesn't do shell expansion)
+      const mergedEnv = { ...process.env, ...this.options.env };
+      const expandedArgs = this.options.args.map((a) => expandEnvVars(a, mergedEnv));
+      this.proc = Bun.spawn([this.options.command, ...expandedArgs], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: stderrSink,
-        env: { ...process.env, ...this.options.env },
+        env: mergedEnv,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
