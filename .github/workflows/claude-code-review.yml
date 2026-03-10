@@ -19,9 +19,9 @@ jobs:
     env:
       ANTHROPIC_BASE_URL: http://10.71.20.53:4000
       ANTHROPIC_API_KEY: ${{ secrets.LITELLM_API_KEY }}
-      ANTHROPIC_MODEL: sonnet
-      ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet
-      ANTHROPIC_DEFAULT_OPUS_MODEL: opus
+      ANTHROPIC_MODEL: sonnet4.6
+      ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet4.6
+      ANTHROPIC_DEFAULT_OPUS_MODEL: opus4.6
       ANTHROPIC_DEFAULT_HAIKU_MODEL: haiku
     steps:
       - name: Checkout
@@ -34,7 +34,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.LITELLM_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          model: "sonnet"
+          model: "sonnet4.6"
           direct_prompt: |
             Review this PR for the mcp2cli project (CLI bridge for MCP servers). Focus on:
             1. Bugs and logic errors
