@@ -5,10 +5,18 @@
  * MEM-05: Health check before reuse -- stale connections are replaced.
  */
 import { connectToService, connectToHttpService } from "../connection/index.ts";
+import { connectToWebSocketService } from "../connection/websocket-transport.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import type { McpConnection } from "../connection/types.ts";
-import type { ServicesConfig } from "../config/index.ts";
+import type { ServicesConfig, HttpService, WebSocketService } from "../config/index.ts";
 import { createLogger } from "../logger/index.ts";
+import { checkDriftOnConnect } from "./drift-hook.ts";
+import { extractPolicy } from "../access/filter.ts";
+import {
+  shouldAttemptHttp,
+  recordFailure,
+  recordSuccess,
+} from "../resilience/index.ts";
 
 const log = createLogger("pool");
 
@@ -94,7 +102,9 @@ export class ConnectionPool {
     log.info("connecting", { service: serviceName });
     let connectFn: () => Promise<McpConnection>;
     if (serviceConfig.backend === "http") {
-      connectFn = () => connectToHttpService(serviceConfig);
+      connectFn = () => this.connectHttpWithFallback(serviceName, serviceConfig);
+    } else if (serviceConfig.backend === "websocket") {
+      connectFn = () => this.connectWebSocketWithFallback(serviceName, serviceConfig);
     } else if (serviceConfig.backend === "stdio") {
       connectFn = () => connectToService(serviceConfig);
     } else {
@@ -112,6 +122,10 @@ export class ConnectionPool {
         });
         this.pending.delete(serviceName);
         log.info("connected", { service: serviceName });
+        // ADV-02: Fire-and-forget drift check on new connection
+        // ADV-06: Pass access policy for skill auto-regeneration filtering
+        const policy = extractPolicy(serviceConfig);
+        checkDriftOnConnect(serviceName, connection, policy).catch(() => {});
         return connection;
       },
       (err) => {
@@ -152,6 +166,146 @@ export class ConnectionPool {
   /** Names of all connected services. */
   get serviceNames(): string[] {
     return Array.from(this.connections.keys());
+  }
+
+  /**
+   * Connect to a WebSocket service with circuit breaker and stdio fallback.
+   * Mirrors the HTTP fallback pattern for consistency.
+   */
+  private async connectWebSocketWithFallback(
+    serviceName: string,
+    serviceConfig: WebSocketService,
+  ): Promise<McpConnection> {
+    const hasFallback = !!serviceConfig.fallback;
+    const attemptWs = await shouldAttemptHttp(serviceName);
+
+    if (!attemptWs) {
+      if (hasFallback) {
+        log.warn("fallback_circuit_open", {
+          service: serviceName,
+          url: serviceConfig.url,
+        });
+        return this.connectWsFallback(serviceName, serviceConfig);
+      }
+      throw new ConnectionError(
+        `Circuit breaker open for ${serviceName} and no fallback configured`,
+        `url: ${serviceConfig.url}`,
+      );
+    }
+
+    try {
+      const connection = await connectToWebSocketService(serviceConfig);
+      await recordSuccess(serviceName);
+      return connection;
+    } catch (err) {
+      await recordFailure(serviceName);
+      const message = err instanceof Error ? err.message : String(err);
+
+      if (hasFallback) {
+        log.warn("fallback_ws_failed", {
+          service: serviceName,
+          url: serviceConfig.url,
+          error: message,
+        });
+        return this.connectWsFallback(serviceName, serviceConfig);
+      }
+
+      throw err;
+    }
+  }
+
+  /**
+   * Connect via the stdio fallback defined in a WebSocket service config.
+   */
+  private async connectWsFallback(
+    serviceName: string,
+    serviceConfig: WebSocketService,
+  ): Promise<McpConnection> {
+    const fb = serviceConfig.fallback!;
+    log.warn("using_stdio_fallback", {
+      service: serviceName,
+      command: fb.command,
+    });
+    return connectToService({
+      backend: "stdio" as const,
+      command: fb.command,
+      args: fb.args,
+      env: fb.env,
+    });
+  }
+
+  /**
+   * INFRA-01/02: Connect to an HTTP service with circuit breaker and stdio fallback.
+   * 1. If circuit is open, skip HTTP and go directly to fallback.
+   * 2. If circuit is closed/half-open, attempt HTTP connection.
+   * 3. On HTTP failure, record failure in circuit breaker.
+   * 4. If fallback is configured, fall back to stdio; otherwise re-throw.
+   */
+  private async connectHttpWithFallback(
+    serviceName: string,
+    serviceConfig: HttpService,
+  ): Promise<McpConnection> {
+    const hasFallback = !!serviceConfig.fallback;
+    const attemptHttp = await shouldAttemptHttp(serviceName);
+
+    // Circuit is open -- skip HTTP entirely
+    if (!attemptHttp) {
+      if (hasFallback) {
+        log.warn("fallback_circuit_open", {
+          service: serviceName,
+          url: serviceConfig.url,
+        });
+        return this.connectFallback(serviceName, serviceConfig);
+      }
+      // No fallback configured -- report the open circuit as an error
+      throw new ConnectionError(
+        `Circuit breaker open for ${serviceName} and no fallback configured`,
+        `url: ${serviceConfig.url}`,
+      );
+    }
+
+    // Attempt HTTP connection
+    try {
+      const connection = await connectToHttpService(serviceConfig);
+      await recordSuccess(serviceName);
+      return connection;
+    } catch (err) {
+      await recordFailure(serviceName);
+      const message = err instanceof Error ? err.message : String(err);
+
+      if (hasFallback) {
+        log.warn("fallback_http_failed", {
+          service: serviceName,
+          url: serviceConfig.url,
+          error: message,
+        });
+        return this.connectFallback(serviceName, serviceConfig);
+      }
+
+      // No fallback -- propagate the original error
+      throw err;
+    }
+  }
+
+  /**
+   * Connect via the stdio fallback defined in an HTTP service config.
+   * Constructs a StdioService-compatible object from the fallback fields.
+   */
+  private async connectFallback(
+    serviceName: string,
+    serviceConfig: HttpService,
+  ): Promise<McpConnection> {
+    const fb = serviceConfig.fallback!;
+    log.warn("using_stdio_fallback", {
+      service: serviceName,
+      command: fb.command,
+    });
+    return connectToService({
+      backend: "stdio" as const,
+      command: fb.command,
+      args: fb.args,
+      env: fb.env,
+    });
   }
 
   /**

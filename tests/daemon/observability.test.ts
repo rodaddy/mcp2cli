@@ -72,16 +72,24 @@ const testConfig = {
 
 describe("Daemon Observability", () => {
   let tempDir: string;
+  let origCacheDir: string | undefined;
   let servers: ReturnType<typeof createDaemonServer>[] = [];
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "mcp2cli-obs-test-"));
+    origCacheDir = process.env.MCP2CLI_CACHE_DIR;
+    process.env.MCP2CLI_CACHE_DIR = join(tempDir, "schemas");
     mockConnectToService.mockClear();
     mockCallTool.mockClear();
     mockClose.mockClear();
   });
 
   afterEach(async () => {
+    if (origCacheDir !== undefined) {
+      process.env.MCP2CLI_CACHE_DIR = origCacheDir;
+    } else {
+      delete process.env.MCP2CLI_CACHE_DIR;
+    }
     resetLogLevel();
     for (const s of servers) {
       try {
