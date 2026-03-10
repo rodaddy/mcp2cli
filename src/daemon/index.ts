@@ -27,6 +27,10 @@ export async function startDaemon(): Promise<void> {
   await mkdir(dirname(paths.pidFile), { recursive: true });
   await mkdir(dirname(paths.socketPath), { recursive: true });
 
+  // Clean up stale socket/pid from previous crash
+  await unlink(paths.socketPath).catch(() => {});
+  await unlink(paths.pidFile).catch(() => {});
+
   // Write PID file
   await Bun.write(paths.pidFile, String(process.pid) + "\n");
   log.info("daemon starting", { pid: process.pid, socket: paths.socketPath });
