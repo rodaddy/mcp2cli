@@ -1,4 +1,7 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type { McpConnection } from "../../src/connection/types.ts";
 import type { ServicesConfig } from "../../src/config/index.ts";
 
@@ -18,6 +21,25 @@ mock.module("../../src/connection/index.ts", () => ({
 
 // Import pool AFTER mocking
 const { ConnectionPool } = await import("../../src/daemon/pool.ts");
+
+// -- Cache isolation: prevent tests from polluting real cache --
+let testDir: string;
+let origCacheDir: string | undefined;
+
+beforeEach(async () => {
+  testDir = await mkdtemp(join(tmpdir(), "mcp2cli-pool-test-"));
+  origCacheDir = process.env.MCP2CLI_CACHE_DIR;
+  process.env.MCP2CLI_CACHE_DIR = join(testDir, "schemas");
+});
+
+afterEach(async () => {
+  if (origCacheDir !== undefined) {
+    process.env.MCP2CLI_CACHE_DIR = origCacheDir;
+  } else {
+    delete process.env.MCP2CLI_CACHE_DIR;
+  }
+  await rm(testDir, { recursive: true, force: true });
+});
 
 const testConfig: ServicesConfig = {
   services: {

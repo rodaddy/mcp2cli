@@ -1,0 +1,10 @@
+{
+  "services": {
+    "n8n": {
+      "description": "n8n workflow automation",
+      "backend": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic/n8n-mcp"]
+    }
+  }
+}

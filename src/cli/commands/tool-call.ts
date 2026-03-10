@@ -8,12 +8,15 @@ import {
 import { validationResultToCliError } from "../../validation/pipelines.ts";
 import { loadConfig } from "../../config/index.ts";
 import { connectToService, connectToHttpService } from "../../connection/index.ts";
+import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { getToolSchema } from "../../schema/introspect.ts";
+import { checkToolAccess, extractPolicy } from "../../access/index.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { ErrorCode } from "../../types/index.ts";
 import type { SchemaOutput } from "../../schema/types.ts";
+import { formatOutput } from "../../format/index.ts";
 
 /**
  * Map daemon error codes to semantic exit codes.
@@ -73,6 +76,19 @@ export async function handleToolCall(args: string[]): Promise<void> {
     return;
   }
 
+  // Access control: check if tool is blocked by policy
+  const policy = extractPolicy(service);
+  const accessResult = checkToolAccess(parsed.value.toolName, policy);
+  if (!accessResult.allowed) {
+    printError({
+      error: true,
+      code: "TOOL_BLOCKED",
+      message: `Tool '${parsed.value.toolName}' is blocked by access policy for service '${parsed.value.serviceName}'`,
+    });
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+
   const daemonEnabled = !process.env.MCP2CLI_NO_DAEMON;
 
   if (daemonEnabled) {
@@ -119,15 +135,15 @@ export async function handleToolCall(args: string[]): Promise<void> {
 
     if (result.success) {
       // Field masking on successful daemon response
+      let outputData = result.result;
       if (parsed.value.fields.length > 0) {
         const { masked, missing } = applyFieldMask(result.result, parsed.value.fields);
         for (const field of missing) {
           process.stderr.write(`warning: field "${field}" not found in response\n`);
         }
-        console.log(JSON.stringify({ success: true, result: masked }));
-      } else {
-        console.log(JSON.stringify(result));
+        outputData = masked;
       }
+      console.log(formatOutput(outputData, parsed.value.format));
       process.exitCode = EXIT_CODES.SUCCESS;
     } else {
       printError({
@@ -143,10 +159,12 @@ export async function handleToolCall(args: string[]): Promise<void> {
 
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
-  // 4. Connect to MCP server (stdio or http)
+  // 4. Connect to MCP server (stdio, http, or websocket)
   const connection = service.backend === "http"
     ? await connectToHttpService(service)
-    : await connectToService(service);
+    : service.backend === "websocket"
+      ? await connectToWebSocketService(service)
+      : await connectToService(service);
 
   try {
     // Dry-run interception (inside try/finally so connection closes)
@@ -187,15 +205,15 @@ export async function handleToolCall(args: string[]): Promise<void> {
     const output = formatToolResult(result as Parameters<typeof formatToolResult>[0]);
 
     // 8. Field masking on successful response
+    let outputData = output.result;
     if (parsed.value.fields.length > 0) {
       const { masked, missing } = applyFieldMask(output.result, parsed.value.fields);
       for (const field of missing) {
         process.stderr.write(`warning: field "${field}" not found in response\n`);
       }
-      console.log(JSON.stringify({ success: true, result: masked }));
-    } else {
-      console.log(JSON.stringify(output));
+      outputData = masked;
     }
+    console.log(formatOutput(outputData, parsed.value.format));
     process.exitCode = EXIT_CODES.SUCCESS;
   } finally {
     await connection.close();

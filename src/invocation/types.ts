@@ -1,4 +1,5 @@
 import type { ErrorCode } from "../types/index.ts";
+import type { OutputFormat } from "../format/types.ts";
 
 /**
  * Parsed CLI tool call arguments.
@@ -10,6 +11,7 @@ export interface ParsedToolCall {
   params: Record<string, unknown>;
   dryRun: boolean;
   fields: string[];
+  format: OutputFormat;
 }
 
 /**

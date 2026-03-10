@@ -1,0 +1,13 @@
+{
+  "services": {
+    "n8n": {
+      "description": "n8n via HTTP gateway with stdio fallback",
+      "backend": "http",
+      "url": "http://mcp-gateway.local:3000/n8n",
+      "fallback": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/n8n-mcp"]
+      }
+    }
+  }
+}

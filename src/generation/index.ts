@@ -28,3 +28,23 @@ export {
   planFileWrites,
   executeFileWrites,
 } from "./file-manager.ts";
+
+// Preservation
+export {
+  extractManualSections,
+  injectManualSections,
+  createManualPlaceholder,
+} from "./preserve.ts";
+export type { ManualSection } from "./preserve.ts";
+
+// Diff
+export {
+  parseExistingTools,
+  computeSkillDiff,
+  formatDiffPreview,
+} from "./diff.ts";
+export type { ToolChange, SkillDiffResult } from "./diff.ts";
+
+// Auto-regeneration
+export { autoRegenerateSkills } from "./auto-regen.ts";
+export type { AutoRegenResult } from "./auto-regen.ts";

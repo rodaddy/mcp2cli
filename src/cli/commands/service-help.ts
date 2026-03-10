@@ -4,9 +4,11 @@
  */
 import { loadConfig } from "../../config/index.ts";
 import { connectToService, connectToHttpService } from "../../connection/index.ts";
+import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { listToolsViaDaemon } from "../../process/index.ts";
 import { listToolsForService, formatToolListing } from "../../schema/index.ts";
 import type { ToolListing, ToolSummary } from "../../schema/index.ts";
+import { filterTools, extractPolicy } from "../../access/index.ts";
 import { isAiMode } from "../help.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
@@ -36,7 +38,9 @@ export async function handleServiceHelp(
     const result = await listToolsViaDaemon({ service: serviceName });
 
     if (result.success) {
-      const tools = result.result as ToolSummary[];
+      const allTools = result.result as ToolSummary[];
+      const policy = extractPolicy(service);
+      const tools = filterTools(allTools, policy);
       const listing: ToolListing = {
         service: serviceName,
         description: service.description ?? "(no description)",
@@ -61,13 +65,17 @@ export async function handleServiceHelp(
 
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
-  // Connect and introspect (stdio or http)
+  // Connect and introspect (stdio, http, or websocket)
   const connection = service.backend === "http"
     ? await connectToHttpService(service)
-    : await connectToService(service);
+    : service.backend === "websocket"
+      ? await connectToWebSocketService(service)
+      : await connectToService(service);
 
   try {
-    const tools = await listToolsForService(connection.client);
+    const allTools = await listToolsForService(connection.client);
+    const policy = extractPolicy(service);
+    const tools = filterTools(allTools, policy);
 
     const listing: ToolListing = {
       service: serviceName,

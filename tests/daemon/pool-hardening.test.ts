@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
+import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type { McpConnection } from "../../src/connection/types.ts";
 import type { ServicesConfig } from "../../src/config/index.ts";
 
@@ -59,6 +62,25 @@ const singleConfig: ServicesConfig = {
     },
   },
 };
+
+// -- Cache isolation: prevent tests from polluting real cache --
+let testDir: string;
+let origCacheDir: string | undefined;
+
+beforeEach(async () => {
+  testDir = await mkdtemp(join(tmpdir(), "mcp2cli-pool-hard-test-"));
+  origCacheDir = process.env.MCP2CLI_CACHE_DIR;
+  process.env.MCP2CLI_CACHE_DIR = join(testDir, "schemas");
+});
+
+afterEach(async () => {
+  if (origCacheDir !== undefined) {
+    process.env.MCP2CLI_CACHE_DIR = origCacheDir;
+  } else {
+    delete process.env.MCP2CLI_CACHE_DIR;
+  }
+  await rm(testDir, { recursive: true, force: true });
+});
 
 describe("ConnectionPool Hardening", () => {
   let pool: InstanceType<typeof ConnectionPool>;

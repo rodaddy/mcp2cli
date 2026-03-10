@@ -15,6 +15,10 @@ export function estimateTokens(text: string): number {
 const MARKER_START = "<!-- AUTO-GENERATED:START -->";
 const MARKER_END = "<!-- AUTO-GENERATED:END -->";
 
+/** Manual (user-editable) section markers */
+const MANUAL_START = "<!-- MANUAL:START -->";
+const MANUAL_END = "<!-- MANUAL:END -->";
+
 /**
  * Generate a slim SKILL.md file with YAML frontmatter, tool table, and invoke pattern.
  * Stays under 300 tokens for typical services.
@@ -66,6 +70,14 @@ export function generateSkillMd(input: SkillTemplateInput): string {
   lines.push("");
 
   lines.push(MARKER_END);
+  lines.push("");
+
+  // Manual section for user customizations (preserved across regeneration)
+  lines.push("## Notes");
+  lines.push("");
+  lines.push(MANUAL_START);
+  lines.push("<!-- Add your custom notes, examples, or overrides here -->");
+  lines.push(MANUAL_END);
   lines.push("");
 
   return lines.join("\n");
