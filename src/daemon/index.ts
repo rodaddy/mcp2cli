@@ -10,10 +10,11 @@ import { getDaemonPaths, getDaemonListenConfig } from "./paths.ts";
 import { ConnectionPool } from "./pool.ts";
 import { IdleTimer } from "./idle.ts";
 import { createDaemonServer } from "./server.ts";
-import { loadConfig } from "../config/index.ts";
+import { loadConfig, getConfigPath } from "../config/index.ts";
 import { createLogger } from "../logger/index.ts";
-import { loadAuthToken } from "./auth.ts";
 import { MetricsCollector } from "./metrics.ts";
+import { ConfigManager } from "./config-manager.ts";
+import { TokenAuthProvider } from "./auth-provider.ts";
 
 const log = createLogger("daemon");
 
@@ -56,17 +57,23 @@ export async function startDaemon(): Promise<void> {
   // Load service configuration
   const config = await loadConfig();
 
-  // Load auth token
-  const authToken = loadAuthToken();
-  if (isTcp && !authToken) {
-    log.warn("no_auth_token", {
-      message: "TCP mode without MCP2CLI_AUTH_TOKEN -- daemon is unauthenticated",
+  // Create config manager for runtime CRUD (wraps the loaded config)
+  const configManager = new ConfigManager(config, getConfigPath());
+
+  // Load auth provider (tokens.json or legacy MCP2CLI_AUTH_TOKEN)
+  const authProvider = await TokenAuthProvider.load();
+  if (isTcp && !authProvider.enabled) {
+    log.warn("no_auth_configured", {
+      message: "TCP mode without auth -- daemon is unauthenticated. Set MCP2CLI_AUTH_TOKEN or create tokens.json",
     });
   }
 
   // Create connection pool and metrics collector
   const pool = new ConnectionPool();
   const metrics = new MetricsCollector();
+
+  // Wire pool into config manager for connection lifecycle
+  configManager.setPool(pool);
 
   // Parse idle timeout from env (seconds -> ms)
   // TCP mode: default to 0 (disabled) since it's a long-running network service
@@ -120,11 +127,12 @@ export async function startDaemon(): Promise<void> {
     listenConfig,
     pool,
     config,
+    configManager,
     idleTimer,
     onShutdown: () => {
       void gracefulShutdown();
     },
-    authToken,
+    authProvider,
     metrics,
   });
 

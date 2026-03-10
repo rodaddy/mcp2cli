@@ -59,6 +59,7 @@ const { ConnectionPool } = await import("../../src/daemon/pool.ts");
 const { createDaemonServer } = await import("../../src/daemon/server.ts");
 const { IdleTimer } = await import("../../src/daemon/idle.ts");
 const { MetricsCollector } = await import("../../src/daemon/metrics.ts");
+const { TokenAuthProvider } = await import("../../src/daemon/auth-provider.ts");
 
 const testConfig = {
   services: {
@@ -113,7 +114,7 @@ describe("Daemon Observability", () => {
       config: testConfig,
       idleTimer,
       onShutdown: () => {},
-      authToken: undefined,
+      authProvider: new TokenAuthProvider([]),
       metrics: new MetricsCollector(),
     });
     servers.push(server);
