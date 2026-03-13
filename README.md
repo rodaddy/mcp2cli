@@ -4,6 +4,8 @@
 
 CLI bridge that wraps MCP (Model Context Protocol) servers as bash-invokable commands. Instead of loading all MCP tool definitions into an LLM's system prompt (~13K+ tokens permanently), agents invoke tools via bash at zero context cost.
 
+Inspired by [Google Workspace CLI](https://github.com/googleworkspace/cli), which wrapped Google's complex APIs into simple CLI commands -- all the functionality, none of the hassle. mcp2cli does the same for MCP servers.
+
 ## Quick Start
 
 ```bash
