@@ -1,5 +1,7 @@
 # mcp2cli
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/rodaddy)
+
 CLI bridge that wraps MCP (Model Context Protocol) servers as bash-invokable commands. Instead of loading all MCP tool definitions into an LLM's system prompt (~13K+ tokens permanently), agents invoke tools via bash at zero context cost.
 
 ## Quick Start
