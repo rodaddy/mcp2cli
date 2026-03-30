@@ -107,8 +107,11 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           callTool = body.tool;
           const conn = await pool.getConnection(body.service, getConfig());
 
-          // MEM-02: AbortSignal timeout on tool calls (default 30s, configurable)
-          const timeout = parseInt(process.env.MCP2CLI_TOOL_TIMEOUT ?? "30000", 10);
+          // MEM-02: AbortSignal timeout on tool calls
+          // Priority: per-service config > MCP2CLI_TOOL_TIMEOUT env > 30s default
+          const serviceConfig = getConfig().services[body.service];
+          const perServiceTimeout = serviceConfig && "timeout" in serviceConfig ? serviceConfig.timeout : undefined;
+          const timeout = perServiceTimeout ?? parseInt(process.env.MCP2CLI_TOOL_TIMEOUT ?? "30000", 10);
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), timeout);
 

@@ -9,6 +9,8 @@ import { z } from "zod";
 const accessControlFields = {
   allowTools: z.array(z.string()).optional(),
   blockTools: z.array(z.string()).optional(),
+  /** Per-service tool call timeout in milliseconds. Overrides MCP2CLI_TOOL_TIMEOUT env var. */
+  timeout: z.number().int().positive().optional(),
 };
 
 /**
