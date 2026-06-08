@@ -5,9 +5,9 @@
  * ADV-06: Triggers auto-regeneration of skill files when drift is detected.
  */
 import type { McpConnection } from "../connection/types.ts";
-import { readCacheRaw, writeCache, hashToolSchema, detectDrift } from "../cache/index.ts";
-import type { CachedToolSchema } from "../cache/index.ts";
+import { readCacheRaw, writeCache, detectDrift, resolveTtlMs, mapToolsToCachedSchemas } from "../cache/index.ts";
 import type { AccessPolicy } from "../access/types.ts";
+import { listAllTools } from "../schema/introspect.ts";
 import { autoRegenerateSkills } from "../generation/auto-regen.ts";
 import { createLogger } from "../logger/index.ts";
 
@@ -29,25 +29,11 @@ export async function checkDriftOnConnect(
   policy?: AccessPolicy,
 ): Promise<void> {
   try {
-    // Fetch live tool list
-    const response = await connection.client.listTools();
-    const liveTools = response.tools;
+    // Fetch live tool list (paginated)
+    const liveTools = await listAllTools(connection.client);
 
     // Hash all live tools
-    const liveSchemas: CachedToolSchema[] = await Promise.all(
-      liveTools.map(async (tool) => ({
-        name: tool.name,
-        description: tool.description ?? "(no description)",
-        inputSchema: tool.inputSchema,
-        annotations: tool.annotations as object | undefined,
-        hash: await hashToolSchema({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          annotations: tool.annotations as object | undefined,
-        }),
-      })),
-    );
+    const liveSchemas = await mapToolsToCachedSchemas(liveTools);
 
     // Read existing cache (raw -- ignoring TTL for drift comparison)
     const cached = await readCacheRaw(serviceName);
@@ -100,7 +86,7 @@ export async function checkDriftOnConnect(
     }
 
     // Always update cache with fresh schemas after drift check
-    await writeCache(serviceName, liveSchemas);
+    await writeCache(serviceName, liveSchemas, resolveTtlMs());
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn("drift_check_failed", { service: serviceName, error: message });

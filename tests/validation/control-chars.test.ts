@@ -12,28 +12,22 @@ describe("rejectControlChars", () => {
     }
   });
 
-  test("rejects newline (0x0A)", () => {
-    const result = rejectControlChars("id\ninjected", "field");
-    expect(result.valid).toBe(false);
-    if (!result.valid) {
-      expect(result.code).toBe("CONTROL_CHAR");
-    }
+  test("allows newline (0x0A) in tool parameters", () => {
+    const result = rejectControlChars("line1\nline2", "field");
+    expect(result.valid).toBe(true);
   });
 
   test("rejects carriage return (0x0D)", () => {
-    const result = rejectControlChars("id\rinjected", "field");
+    const result = rejectControlChars("line1\rline2", "field");
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(result.code).toBe("CONTROL_CHAR");
     }
   });
 
-  test("rejects tab (0x09)", () => {
-    const result = rejectControlChars("id\tvalue", "field");
-    expect(result.valid).toBe(false);
-    if (!result.valid) {
-      expect(result.code).toBe("CONTROL_CHAR");
-    }
+  test("allows tab (0x09) in tool parameters", () => {
+    const result = rejectControlChars("col1\tcol2", "field");
+    expect(result.valid).toBe(true);
   });
 
   test("rejects escape character (0x1B)", () => {

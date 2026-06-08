@@ -21,6 +21,25 @@ function validateServiceName(service: string): string {
 /** Default TTL: 24 hours in milliseconds */
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** Maximum TTL: 7 days in seconds */
+const MAX_TTL_SECONDS = 604800;
+
+/** Resolve TTL from MCP2CLI_SCHEMA_TTL env var (seconds) or default */
+export function resolveTtlMs(): number {
+  const envVal = process.env.MCP2CLI_SCHEMA_TTL;
+  if (envVal) {
+    const seconds = parseInt(envVal, 10);
+    if (!Number.isNaN(seconds) && seconds > 0) {
+      if (seconds > MAX_TTL_SECONDS) {
+        log.warn("ttl_capped", { requested: seconds, max: MAX_TTL_SECONDS });
+        return MAX_TTL_SECONDS * 1000;
+      }
+      return seconds * 1000;
+    }
+  }
+  return DEFAULT_TTL_MS;
+}
+
 /**
  * Resolve the cache directory path.
  * MCP2CLI_CACHE_DIR env var overrides the default location.
@@ -68,6 +87,13 @@ export async function readCache(service: string): Promise<CacheEntry | null> {
     log.warn("cache_invalid_structure", { service });
     return null;
   }
+
+  // Validate tool shapes -- reject entries missing required fields
+  entry.tools = entry.tools.filter((t) => {
+    if (typeof t.name !== "string" || !t.name) return false;
+    if (typeof t.inputSchema !== "object" || t.inputSchema === null) return false;
+    return true;
+  });
 
   // Check TTL
   if (isCacheExpired(entry.metadata)) {
@@ -202,6 +228,12 @@ export async function readCacheRaw(service: string): Promise<CacheEntry | null> 
     if (!entry.metadata || !Array.isArray(entry.tools)) {
       return null;
     }
+    // Validate tool shapes -- reject entries missing required fields
+    entry.tools = entry.tools.filter((t) => {
+      if (typeof t.name !== "string" || !t.name) return false;
+      if (typeof t.inputSchema !== "object" || t.inputSchema === null) return false;
+      return true;
+    });
     return entry;
   } catch {
     return null;

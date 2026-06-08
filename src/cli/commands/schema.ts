@@ -12,9 +12,11 @@ import {
   parseDotNotation,
   getToolSchema,
   formatSchemaOutput,
+  resolveToolName,
+  generateUsageExample,
 } from "../../schema/index.ts";
 import type { SchemaOutput } from "../../schema/index.ts";
-import { readCache, writeCache, hashToolSchema } from "../../cache/index.ts";
+import { readCache, readCacheRaw, writeCache, hashToolSchema, resolveTtlMs } from "../../cache/index.ts";
 import type { CachedToolSchema } from "../../cache/index.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";
 import { validateIdentifier } from "../../validation/pipelines.ts";
@@ -99,14 +101,15 @@ export const handleSchema: CommandHandler = async (args: string[]) => {
   if (!fresh) {
     const cached = await readCache(serviceName);
     if (cached) {
-      const cachedTool = cached.tools.find((t) => t.name === toolName);
+      const resolved = resolveToolName(cached.tools, toolName, serviceName);
+      const cachedTool = resolved ? cached.tools.find((t) => t.name === resolved) : null;
       if (cachedTool) {
         const output: SchemaOutput = {
           tool: cachedTool.name,
           description: cachedTool.description,
           inputSchema: cachedTool.inputSchema,
           annotations: cachedTool.annotations,
-          usage: `mcp2cli ${serviceName} ${cachedTool.name}`,
+          usage: generateUsageExample(serviceName, cachedTool.name, cachedTool.inputSchema),
         };
         console.log(formatSchemaOutput(output));
         process.exitCode = EXIT_CODES.SUCCESS;
@@ -179,8 +182,6 @@ async function cacheSchemaResult(
   schema: SchemaOutput,
 ): Promise<void> {
   try {
-    // Read existing cache to merge
-    const { readCacheRaw } = await import("../../cache/index.ts");
     const existing = await readCacheRaw(serviceName);
     const existingTools = existing?.tools ?? [];
 
@@ -207,8 +208,10 @@ async function cacheSchemaResult(
       existingTools.push(newTool);
     }
 
-    await writeCache(serviceName, existingTools);
-  } catch {
-    // Cache write failure is non-fatal -- log and continue
+    await writeCache(serviceName, existingTools, resolveTtlMs());
+  } catch (err) {
+    // Cache write failure is non-fatal
+    const message = err instanceof Error ? err.message : String(err);
+    process.env.MCP2CLI_DEBUG && console.error(`[schema] cache write failed: ${message}`);
   }
 }

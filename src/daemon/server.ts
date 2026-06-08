@@ -16,7 +16,8 @@ import type {
   DaemonListenConfig,
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
-import { listToolsForService, getToolSchema, resolveToolName } from "../schema/introspect.ts";
+import { listToolsCached, getToolSchemaCached, resolveToolNameCached } from "../schema/cached.ts";
+import { checkToolAccess, extractPolicy } from "../access/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { ToolError } from "../invocation/errors.ts";
 import type { ErrorCode } from "../types/index.ts";
@@ -117,9 +118,18 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           let resolvedTool = body.tool;
           try {
-            const allTools = await conn.client.listTools();
-            resolvedTool = resolveToolName(allTools.tools, body.tool, body.service) ?? body.tool;
-          } catch { /* listTools unavailable, use original name */ }
+            const { resolvedName } = await resolveToolNameCached(conn.client, body.tool, body.service);
+            resolvedTool = resolvedName;
+          } catch { /* cache/listTools unavailable, use original name */ }
+
+          // Access control on resolved tool name (M7)
+          if (serviceConfig) {
+            const policy = extractPolicy(serviceConfig);
+            const accessResult = checkToolAccess(resolvedTool, policy);
+            if (!accessResult.allowed) {
+              return errorResponse("TOOL_BLOCKED", `Tool '${resolvedTool}' is blocked by access policy`, undefined, 403);
+            }
+          }
           let sdkResult: Awaited<ReturnType<typeof conn.client.callTool>>;
           try {
             sdkResult = await Promise.race([
@@ -173,7 +183,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         try {
           const body = (await req.json()) as DaemonListToolsRequest;
           const conn = await pool.getConnection(body.service, getConfig());
-          const tools = await listToolsForService(conn.client);
+          const tools = await listToolsCached(conn.client, body.service);
           return Response.json({ success: true, result: tools });
         } catch (err) {
           return handleEndpointError(err, pool);
@@ -188,7 +198,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         try {
           const body = (await req.json()) as DaemonSchemaRequest;
           const conn = await pool.getConnection(body.service, getConfig());
-          const result = await getToolSchema(
+          const result = await getToolSchemaCached(
             conn.client,
             body.tool,
             body.service,
@@ -361,7 +371,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             if (connected) {
               try {
                 const conn = await pool.getConnection(name, getConfig());
-                const tools = await listToolsForService(conn.client);
+                const tools = await listToolsCached(conn.client, name);
                 toolCount = tools.length;
               } catch { /* connection may have gone stale */ }
             }

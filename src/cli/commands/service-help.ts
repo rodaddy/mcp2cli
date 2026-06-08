@@ -6,7 +6,7 @@ import { loadConfig } from "../../config/index.ts";
 import { connectToService, connectToHttpService } from "../../connection/index.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { listToolsViaDaemon } from "../../process/index.ts";
-import { listToolsForService, formatToolListing } from "../../schema/index.ts";
+import { listToolsCached, formatToolListing } from "../../schema/index.ts";
 import type { ToolListing, ToolSummary } from "../../schema/index.ts";
 import { filterTools, extractPolicy } from "../../access/index.ts";
 import { isAiMode } from "../help.ts";
@@ -73,7 +73,7 @@ export async function handleServiceHelp(
       : await connectToService(service);
 
   try {
-    const allTools = await listToolsForService(connection.client);
+    const allTools = await listToolsCached(connection.client, serviceName);
     const policy = extractPolicy(service);
     const tools = filterTools(allTools, policy);
 

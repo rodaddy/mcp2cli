@@ -21,6 +21,10 @@ export {
   clearCache,
   listCachedServices,
   isCacheExpired,
+  resolveTtlMs,
 } from "./storage.ts";
 
 export { detectDrift } from "./drift.ts";
+
+export type { RawMcpTool } from "./mapper.ts";
+export { mapToolsToCachedSchemas } from "./mapper.ts";

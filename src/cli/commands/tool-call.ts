@@ -10,7 +10,7 @@ import { loadConfig } from "../../config/index.ts";
 import { connectToService, connectToHttpService } from "../../connection/index.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
-import { getToolSchema, resolveToolName } from "../../schema/introspect.ts";
+import { getToolSchemaCached, resolveToolNameCached } from "../../schema/cached.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
@@ -169,7 +169,7 @@ export async function handleToolCall(args: string[]): Promise<void> {
   try {
     // Dry-run interception (inside try/finally so connection closes)
     if (parsed.value.dryRun) {
-      const schema = await getToolSchema(
+      const schema = await getToolSchemaCached(
         connection.client,
         parsed.value.toolName,
         parsed.value.serviceName,
@@ -195,9 +195,12 @@ export async function handleToolCall(args: string[]): Promise<void> {
       return; // finally block closes connection
     }
 
-    // 6. Call tool via MCP protocol (auto-resolve prefixed names)
-    const allTools = await connection.client.listTools();
-    const resolvedName = resolveToolName(allTools.tools, parsed.value.toolName, parsed.value.serviceName) ?? parsed.value.toolName;
+    // 6. Call tool via MCP protocol (auto-resolve prefixed names, cache-aware)
+    const { resolvedName } = await resolveToolNameCached(
+      connection.client,
+      parsed.value.toolName,
+      parsed.value.serviceName,
+    );
     const result = await connection.client.callTool({
       name: resolvedName,
       arguments: parsed.value.params,
