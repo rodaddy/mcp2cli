@@ -16,7 +16,7 @@ const MAX_INPUT_LENGTH = 10_000;
  *   - BOM (U+FEFF) and specials (U+FFF9-U+FFFC)
  * These are never legitimate in MCP tool parameters.
  */
-const CONTROL_CHAR_REGEX = /[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u2029\u202a-\u202e\u2066-\u2069\ufeff\ufff9-\ufffc]/;
+const CONTROL_CHAR_REGEX = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u2029\u202a-\u202e\u2066-\u2069\ufeff\ufff9-\ufffc]/;
 
 /**
  * Matches literal path traversal: ".." preceded/followed by a separator (/ or \) or at string boundary.
