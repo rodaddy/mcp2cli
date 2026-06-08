@@ -14,12 +14,23 @@ interface SearchMatch {
   match: "name" | "description" | "both";
 }
 
+const MAX_PATTERN_LENGTH = 1000;
+const KNOWN_FLAGS = new Set(["--json"]);
+
 export const handleGrep: CommandHandler = async (args: string[]) => {
   const jsonMode = args.includes("--json");
-  const positionalArgs = args.filter((a) => a !== "--json");
+  const positionalArgs = args.filter((a) => !KNOWN_FLAGS.has(a));
+
+  const unknownFlag = positionalArgs.find((a) => a.startsWith("--"));
+  if (unknownFlag) {
+    console.error(`Unknown flag: ${unknownFlag}. Use --json for structured output.`);
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+
   const pattern = positionalArgs[0];
 
-  if (!pattern) {
+  if (!pattern || !pattern.trim()) {
     console.log(
       [
         "Usage: mcp2cli search <pattern> [--json]",
@@ -37,6 +48,12 @@ export const handleGrep: CommandHandler = async (args: string[]) => {
       ].join("\n"),
     );
     process.exitCode = EXIT_CODES.SUCCESS;
+    return;
+  }
+
+  if (pattern.length > MAX_PATTERN_LENGTH) {
+    console.error(`Search pattern exceeds maximum length of ${MAX_PATTERN_LENGTH} characters.`);
+    process.exitCode = EXIT_CODES.VALIDATION;
     return;
   }
 
@@ -62,14 +79,15 @@ export const handleGrep: CommandHandler = async (args: string[]) => {
     if (!entry) continue;
 
     for (const tool of entry.tools) {
+      const desc = tool.description ?? "";
       const nameMatch = tool.name.toLowerCase().includes(lowerPattern);
-      const descMatch = tool.description.toLowerCase().includes(lowerPattern);
+      const descMatch = desc.toLowerCase().includes(lowerPattern);
 
       if (nameMatch || descMatch) {
         matches.push({
           service,
           tool: tool.name,
-          description: tool.description,
+          description: desc,
           match: nameMatch && descMatch ? "both" : nameMatch ? "name" : "description",
         });
       }
