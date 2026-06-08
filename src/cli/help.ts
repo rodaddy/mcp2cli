@@ -63,9 +63,9 @@ export function printHelp(args?: string[]): void {
             usage: "mcp2cli cache <clear [service]|status>",
           },
           {
-            name: "grep",
-            description: "Search tool names and descriptions across cached services",
-            usage: 'mcp2cli grep "pattern"',
+            name: "search",
+            description: "Search tool names and descriptions across cached services (alias: grep)",
+            usage: 'mcp2cli search "pattern" [--json]',
           },
           {
             name: "batch",
@@ -98,7 +98,7 @@ export function printHelp(args?: string[]): void {
       "    bootstrap         Auto-configure from claude.json MCP config",
       "    generate-skills   Generate skill files from service schemas",
       "    cache             Manage schema cache (clear, status)",
-      '    grep             Search tool names/descriptions across cached services',
+      '    search           Search tool names/descriptions across cached services',
       "    batch            Execute multiple tool calls from NDJSON stdin",
       "",
       "EXAMPLES:",
