@@ -16,7 +16,7 @@ import type {
   DaemonListenConfig,
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
-import { listToolsForService, getToolSchema } from "../schema/introspect.ts";
+import { listToolsForService, getToolSchema, resolveToolName } from "../schema/introspect.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { ToolError } from "../invocation/errors.ts";
 import type { ErrorCode } from "../types/index.ts";
@@ -115,11 +115,16 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), timeout);
 
+          let resolvedTool = body.tool;
+          try {
+            const allTools = await conn.client.listTools();
+            resolvedTool = resolveToolName(allTools.tools, body.tool, body.service) ?? body.tool;
+          } catch { /* listTools unavailable, use original name */ }
           let sdkResult: Awaited<ReturnType<typeof conn.client.callTool>>;
           try {
             sdkResult = await Promise.race([
               conn.client.callTool({
-                name: body.tool,
+                name: resolvedTool,
                 arguments: body.params,
               }),
               new Promise<never>((_, reject) => {

@@ -77,6 +77,23 @@ export async function listToolsForService(
   return allTools;
 }
 
+/**
+ * Resolve a tool name, auto-prefixing with serviceName if exact match fails.
+ * e.g., "list_workflows" with service "n8n" resolves to "n8n_list_workflows"
+ */
+export function resolveToolName(
+  tools: { name: string }[],
+  toolName: string,
+  serviceName?: string,
+): string | null {
+  if (tools.some((t) => t.name === toolName)) return toolName;
+  if (serviceName) {
+    const prefixed = `${serviceName}_${toolName}`;
+    if (tools.some((t) => t.name === prefixed)) return prefixed;
+  }
+  return null;
+}
+
 /** Get full schema for a specific tool by name */
 export async function getToolSchema(
   client: Client,
@@ -84,7 +101,8 @@ export async function getToolSchema(
   serviceName?: string,
 ): Promise<SchemaOutput | null> {
   const response = await client.listTools();
-  const tool = response.tools.find((t) => t.name === toolName);
+  const resolved = resolveToolName(response.tools, toolName, serviceName);
+  const tool = resolved ? response.tools.find((t) => t.name === resolved) : null;
 
   if (!tool) return null;
 

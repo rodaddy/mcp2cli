@@ -10,7 +10,7 @@ import { loadConfig } from "../../config/index.ts";
 import { connectToService, connectToHttpService } from "../../connection/index.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
-import { getToolSchema } from "../../schema/introspect.ts";
+import { getToolSchema, resolveToolName } from "../../schema/introspect.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
@@ -195,9 +195,11 @@ export async function handleToolCall(args: string[]): Promise<void> {
       return; // finally block closes connection
     }
 
-    // 6. Call tool via MCP protocol
+    // 6. Call tool via MCP protocol (auto-resolve prefixed names)
+    const allTools = await connection.client.listTools();
+    const resolvedName = resolveToolName(allTools.tools, parsed.value.toolName, parsed.value.serviceName) ?? parsed.value.toolName;
     const result = await connection.client.callTool({
-      name: parsed.value.toolName,
+      name: resolvedName,
       arguments: parsed.value.params,
     });
 
