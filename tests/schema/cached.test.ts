@@ -41,15 +41,15 @@ function makeMockClient(tools: { name: string; description?: string; inputSchema
 }
 
 describe("listToolsCached", () => {
-  test("returns cached tools on cache hit", async () => {
+  test("returns cached tools on cache hit, sorted alphabetically", async () => {
     await writeCache("test-svc", [makeTool("search"), makeTool("list")]);
 
     const mockClient = makeMockClient([]);
     const result = await listToolsCached(mockClient, "test-svc");
 
     expect(result).toHaveLength(2);
-    expect(result[0]!.name).toBe("search");
-    expect(result[1]!.name).toBe("list");
+    expect(result[0]!.name).toBe("list");
+    expect(result[1]!.name).toBe("search");
   });
 
   test("falls back to live client on cache miss", async () => {

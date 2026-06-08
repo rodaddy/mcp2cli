@@ -17,9 +17,12 @@ describe("rejectControlChars", () => {
     expect(result.valid).toBe(true);
   });
 
-  test("allows carriage return (0x0D) in tool parameters", () => {
+  test("rejects carriage return (0x0D)", () => {
     const result = rejectControlChars("line1\rline2", "field");
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.code).toBe("CONTROL_CHAR");
+    }
   });
 
   test("allows tab (0x09) in tool parameters", () => {

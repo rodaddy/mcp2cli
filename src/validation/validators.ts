@@ -8,15 +8,15 @@ const MAX_INPUT_LENGTH = 10_000;
 
 /**
  * Matches control and invisible characters:
- *   - ASCII C0 range (0x00-0x1F) and DEL (0x7F)
- *   - C1 control range (0x80-0x9F)
+ *   - ASCII C0 range (0x00-0x08, 0x0B-0x1F) excluding tab (0x09) and LF (0x0A)
+ *   - DEL (0x7F) and C1 control range (0x80-0x9F)
  *   - Zero-width and Bidi override characters (U+200B-U+200F)
  *   - Line/paragraph separators (U+2028-U+2029)
  *   - Bidi embedding/override/isolate (U+202A-U+202E, U+2066-U+2069)
  *   - BOM (U+FEFF) and specials (U+FFF9-U+FFFC)
- * These are never legitimate in MCP tool parameters.
+ * Only tab (0x09) and LF (0x0A) are allowed. CR (0x0D) is blocked.
  */
-const CONTROL_CHAR_REGEX = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u2029\u202a-\u202e\u2066-\u2069\ufeff\ufff9-\ufffc]/;
+const CONTROL_CHAR_REGEX = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u2029\u202a-\u202e\u2066-\u2069\ufeff\ufff9-\ufffc]/;
 
 /**
  * Matches literal path traversal: ".." preceded/followed by a separator (/ or \) or at string boundary.

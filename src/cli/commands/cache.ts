@@ -2,11 +2,11 @@
  * Handle `mcp2cli cache <subcommand>` -- manage schema cache.
  * Supports: clear [service], status, diff <service>
  */
-import { clearCache, listCachedServices, readCacheRaw, hashToolSchema, detectDrift, resolveTtlMs, writeCache } from "../../cache/index.ts";
-import type { CachedToolSchema } from "../../cache/index.ts";
+import { clearCache, listCachedServices, readCacheRaw, detectDrift, resolveTtlMs, writeCache, mapToolsToCachedSchemas } from "../../cache/index.ts";
 import { loadConfig } from "../../config/index.ts";
 import { connectToService, connectToHttpService } from "../../connection/index.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
+import { listAllTools } from "../../schema/introspect.ts";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { CommandHandler } from "../../types/index.ts";
 
@@ -90,21 +90,8 @@ async function handleCacheDiff(args: string[]): Promise<void> {
       : await connectToService(service);
 
   try {
-    const response = await connection.client.listTools();
-    const liveSchemas: CachedToolSchema[] = await Promise.all(
-      response.tools.map(async (tool) => ({
-        name: tool.name,
-        description: tool.description ?? "(no description)",
-        inputSchema: tool.inputSchema,
-        annotations: tool.annotations as object | undefined,
-        hash: await hashToolSchema({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          annotations: tool.annotations as object | undefined,
-        }),
-      })),
-    );
+    const rawTools = await listAllTools(connection.client);
+    const liveSchemas = await mapToolsToCachedSchemas(rawTools);
 
     const drift = detectDrift(serviceName, cached.tools, liveSchemas, cached.metadata.cachedAt);
 
@@ -146,37 +133,35 @@ async function handleCacheWarm(args: string[]): Promise<void> {
   let warmed = 0;
   let failed = 0;
 
+  const PER_SERVICE_TIMEOUT = 30_000;
+
   for (const serviceName of serviceNames) {
     const service = config.services[serviceName]!;
+    console.log(`  warming ${serviceName}...`);
     try {
-      const connection = service.backend === "http"
-        ? await connectToHttpService(service)
-        : service.backend === "websocket"
-          ? await connectToWebSocketService(service)
-          : await connectToService(service);
+      const result = await Promise.race([
+        (async () => {
+          const connection = service.backend === "http"
+            ? await connectToHttpService(service)
+            : service.backend === "websocket"
+              ? await connectToWebSocketService(service)
+              : await connectToService(service);
 
-      try {
-        const response = await connection.client.listTools();
-        const schemas: CachedToolSchema[] = await Promise.all(
-          response.tools.map(async (tool) => ({
-            name: tool.name,
-            description: tool.description ?? "(no description)",
-            inputSchema: tool.inputSchema,
-            annotations: tool.annotations as object | undefined,
-            hash: await hashToolSchema({
-              name: tool.name,
-              description: tool.description,
-              inputSchema: tool.inputSchema,
-              annotations: tool.annotations as object | undefined,
-            }),
-          })),
-        );
-        await writeCache(serviceName, schemas, resolveTtlMs());
-        console.log(`  ${serviceName}: ${schemas.length} tools cached`);
-        warmed++;
-      } finally {
-        await connection.close();
-      }
+          try {
+            const rawTools = await listAllTools(connection.client);
+            const schemas = await mapToolsToCachedSchemas(rawTools);
+            await writeCache(serviceName, schemas, resolveTtlMs());
+            return schemas.length;
+          } finally {
+            await connection.close();
+          }
+        })(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`timed out after ${PER_SERVICE_TIMEOUT}ms`)), PER_SERVICE_TIMEOUT),
+        ),
+      ]);
+      console.log(`  ${serviceName}: ${result} tools cached`);
+      warmed++;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  ${serviceName}: failed (${message})`);

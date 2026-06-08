@@ -25,3 +25,6 @@ export {
 } from "./storage.ts";
 
 export { detectDrift } from "./drift.ts";
+
+export type { RawMcpTool } from "./mapper.ts";
+export { mapToolsToCachedSchemas } from "./mapper.ts";

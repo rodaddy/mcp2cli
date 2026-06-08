@@ -16,9 +16,8 @@ import type {
   DaemonListenConfig,
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
-import { resolveToolName } from "../schema/introspect.ts";
-import { listToolsCached, getToolSchemaCached } from "../schema/cached.ts";
-import { readCache } from "../cache/index.ts";
+import { listToolsCached, getToolSchemaCached, resolveToolNameCached } from "../schema/cached.ts";
+import { checkToolAccess, extractPolicy } from "../access/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { ToolError } from "../invocation/errors.ts";
 import type { ErrorCode } from "../types/index.ts";
@@ -119,14 +118,18 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           let resolvedTool = body.tool;
           try {
-            const cached = await readCache(body.service);
-            if (cached) {
-              resolvedTool = resolveToolName(cached.tools, body.tool, body.service) ?? body.tool;
-            } else {
-              const allTools = await conn.client.listTools();
-              resolvedTool = resolveToolName(allTools.tools, body.tool, body.service) ?? body.tool;
-            }
+            const { resolvedName } = await resolveToolNameCached(conn.client, body.tool, body.service);
+            resolvedTool = resolvedName;
           } catch { /* cache/listTools unavailable, use original name */ }
+
+          // Access control on resolved tool name (M7)
+          if (serviceConfig) {
+            const policy = extractPolicy(serviceConfig);
+            const accessResult = checkToolAccess(resolvedTool, policy);
+            if (!accessResult.allowed) {
+              return errorResponse("TOOL_BLOCKED", `Tool '${resolvedTool}' is blocked by access policy`, undefined, 403);
+            }
+          }
           let sdkResult: Awaited<ReturnType<typeof conn.client.callTool>>;
           try {
             sdkResult = await Promise.race([

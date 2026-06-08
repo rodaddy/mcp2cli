@@ -26,6 +26,36 @@ function truncateDesc(desc: string | undefined): string {
   return desc;
 }
 
+/** Raw tool type from MCP client.listTools() response */
+interface RawTool {
+  name: string;
+  description?: string;
+  inputSchema: object;
+  annotations?: unknown;
+}
+
+/**
+ * Paginated listTools that returns the raw tool objects.
+ * All code paths that need raw tools should use this instead of
+ * bare client.listTools() to handle servers with pagination.
+ */
+export async function listAllTools(client: Client): Promise<RawTool[]> {
+  const allTools: RawTool[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const response = await client.listTools(
+      cursor ? { cursor } : undefined,
+    );
+    for (const tool of response.tools) {
+      allTools.push(tool);
+    }
+    cursor = response.nextCursor;
+  } while (cursor);
+
+  return allTools;
+}
+
 /** Parse "service.tool" dot notation into components */
 export function parseDotNotation(
   arg: string,
@@ -52,24 +82,12 @@ export function parseDotNotation(
 export async function listToolsForService(
   client: Client,
 ): Promise<ToolSummary[]> {
-  const allTools: ToolSummary[] = [];
-  let cursor: string | undefined;
+  const rawTools = await listAllTools(client);
 
-  // Loop for pagination support
-  do {
-    const response = await client.listTools(
-      cursor ? { cursor } : undefined,
-    );
-
-    for (const tool of response.tools) {
-      allTools.push({
-        name: tool.name,
-        description: truncateDesc(tool.description),
-      });
-    }
-
-    cursor = response.nextCursor;
-  } while (cursor);
+  const allTools: ToolSummary[] = rawTools.map((tool) => ({
+    name: tool.name,
+    description: truncateDesc(tool.description),
+  }));
 
   // Sort alphabetically by name
   allTools.sort((a, b) => a.name.localeCompare(b.name));
@@ -100,9 +118,9 @@ export async function getToolSchema(
   toolName: string,
   serviceName?: string,
 ): Promise<SchemaOutput | null> {
-  const response = await client.listTools();
-  const resolved = resolveToolName(response.tools, toolName, serviceName);
-  const tool = resolved ? response.tools.find((t) => t.name === resolved) : null;
+  const tools = await listAllTools(client);
+  const resolved = resolveToolName(tools, toolName, serviceName);
+  const tool = resolved ? tools.find((t) => t.name === resolved) : null;
 
   if (!tool) return null;
 

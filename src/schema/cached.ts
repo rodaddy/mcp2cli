@@ -5,9 +5,10 @@
  */
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { ToolSummary, SchemaOutput } from "./types.ts";
-import type { CachedToolSchema } from "../cache/types.ts";
-import { listToolsForService, getToolSchema, generateUsageExample, resolveToolName } from "./introspect.ts";
-import { readCache, writeCache, hashToolSchema, resolveTtlMs } from "../cache/index.ts";
+import { listAllTools, generateUsageExample, resolveToolName } from "./introspect.ts";
+import { truncateDescription } from "./format.ts";
+import { readCache, writeCache, resolveTtlMs, mapToolsToCachedSchemas } from "../cache/index.ts";
+import type { RawMcpTool } from "../cache/index.ts";
 import { createLogger } from "../logger/index.ts";
 
 const log = createLogger("schema-cache");
@@ -23,15 +24,22 @@ export async function listToolsCached(
   const cached = await readCache(serviceName);
   if (cached) {
     log.debug("list_tools_cache_hit", { service: serviceName, toolCount: cached.tools.length });
-    return cached.tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-    }));
+    return cached.tools
+      .map((t) => ({
+        name: t.name,
+        description: truncateDescription(t.description),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  const tools = await listToolsForService(client);
-  cacheToolList(serviceName, client).catch(() => {});
-  return tools;
+  const rawTools = await listAllTools(client);
+  cacheToolsFromResponse(serviceName, rawTools);
+  return rawTools
+    .map((t) => ({
+      name: t.name,
+      description: truncateDescription(t.description ?? "(no description)"),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -59,11 +67,22 @@ export async function getToolSchemaCached(
     }
   }
 
-  const result = await getToolSchema(client, toolName, serviceName);
-  if (result) {
-    cacheToolList(serviceName, client).catch(() => {});
+  const rawTools = await listAllTools(client);
+  const resolved = resolveToolName(rawTools, toolName, serviceName);
+  const tool = resolved ? rawTools.find((t) => t.name === resolved) : null;
+
+  if (tool) {
+    cacheToolsFromResponse(serviceName, rawTools);
+    return {
+      tool: tool.name,
+      description: tool.description ?? "(no description)",
+      inputSchema: tool.inputSchema,
+      annotations: tool.annotations as object | undefined,
+      usage: generateUsageExample(serviceName, tool.name, tool.inputSchema),
+    };
   }
-  return result;
+
+  return null;
 }
 
 /**
@@ -85,36 +104,23 @@ export async function resolveToolNameCached(
     };
   }
 
-  const response = await client.listTools();
-  const resolved = resolveToolName(response.tools, toolName, serviceName);
-  cacheToolList(serviceName, client).catch(() => {});
+  const rawTools = await listAllTools(client);
+  const resolved = resolveToolName(rawTools, toolName, serviceName);
+  cacheToolsFromResponse(serviceName, rawTools);
   return {
     resolvedName: resolved ?? toolName,
-    tools: response.tools,
+    tools: rawTools,
   };
 }
 
 /**
- * Fetch full tool list from MCP server and write to cache.
+ * Hash and write pre-fetched tools to cache.
  * Fire-and-forget — errors are logged but never propagated.
+ * Callers pass already-fetched tools to avoid double round-trips.
  */
-async function cacheToolList(serviceName: string, client: Client): Promise<void> {
+async function cacheToolsFromResponse(serviceName: string, tools: RawMcpTool[]): Promise<void> {
   try {
-    const response = await client.listTools();
-    const schemas: CachedToolSchema[] = await Promise.all(
-      response.tools.map(async (tool) => ({
-        name: tool.name,
-        description: tool.description ?? "(no description)",
-        inputSchema: tool.inputSchema,
-        annotations: tool.annotations as object | undefined,
-        hash: await hashToolSchema({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          annotations: tool.annotations as object | undefined,
-        }),
-      })),
-    );
+    const schemas = await mapToolsToCachedSchemas(tools);
     await writeCache(serviceName, schemas, resolveTtlMs());
     log.debug("cache_populated", { service: serviceName, toolCount: schemas.length });
   } catch (err) {
