@@ -21,6 +21,16 @@ function validateServiceName(service: string): string {
 /** Default TTL: 24 hours in milliseconds */
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** Resolve TTL from MCP2CLI_SCHEMA_TTL env var (seconds) or default */
+export function resolveTtlMs(): number {
+  const envVal = process.env.MCP2CLI_SCHEMA_TTL;
+  if (envVal) {
+    const seconds = parseInt(envVal, 10);
+    if (!Number.isNaN(seconds) && seconds > 0) return seconds * 1000;
+  }
+  return DEFAULT_TTL_MS;
+}
+
 /**
  * Resolve the cache directory path.
  * MCP2CLI_CACHE_DIR env var overrides the default location.

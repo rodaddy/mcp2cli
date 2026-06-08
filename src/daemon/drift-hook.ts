@@ -5,7 +5,7 @@
  * ADV-06: Triggers auto-regeneration of skill files when drift is detected.
  */
 import type { McpConnection } from "../connection/types.ts";
-import { readCacheRaw, writeCache, hashToolSchema, detectDrift } from "../cache/index.ts";
+import { readCacheRaw, writeCache, hashToolSchema, detectDrift, resolveTtlMs } from "../cache/index.ts";
 import type { CachedToolSchema } from "../cache/index.ts";
 import type { AccessPolicy } from "../access/types.ts";
 import { autoRegenerateSkills } from "../generation/auto-regen.ts";
@@ -100,7 +100,7 @@ export async function checkDriftOnConnect(
     }
 
     // Always update cache with fresh schemas after drift check
-    await writeCache(serviceName, liveSchemas);
+    await writeCache(serviceName, liveSchemas, resolveTtlMs());
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn("drift_check_failed", { service: serviceName, error: message });

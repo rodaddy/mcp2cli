@@ -14,7 +14,7 @@ import {
   formatSchemaOutput,
 } from "../../schema/index.ts";
 import type { SchemaOutput } from "../../schema/index.ts";
-import { readCache, writeCache, hashToolSchema } from "../../cache/index.ts";
+import { readCache, writeCache, hashToolSchema, resolveTtlMs } from "../../cache/index.ts";
 import type { CachedToolSchema } from "../../cache/index.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";
 import { validateIdentifier } from "../../validation/pipelines.ts";
@@ -207,7 +207,7 @@ async function cacheSchemaResult(
       existingTools.push(newTool);
     }
 
-    await writeCache(serviceName, existingTools);
+    await writeCache(serviceName, existingTools, resolveTtlMs());
   } catch {
     // Cache write failure is non-fatal -- log and continue
   }

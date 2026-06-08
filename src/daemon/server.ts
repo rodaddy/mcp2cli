@@ -16,7 +16,9 @@ import type {
   DaemonListenConfig,
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
-import { listToolsForService, getToolSchema, resolveToolName } from "../schema/introspect.ts";
+import { resolveToolName } from "../schema/introspect.ts";
+import { listToolsCached, getToolSchemaCached } from "../schema/cached.ts";
+import { readCache } from "../cache/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { ToolError } from "../invocation/errors.ts";
 import type { ErrorCode } from "../types/index.ts";
@@ -117,9 +119,14 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           let resolvedTool = body.tool;
           try {
-            const allTools = await conn.client.listTools();
-            resolvedTool = resolveToolName(allTools.tools, body.tool, body.service) ?? body.tool;
-          } catch { /* listTools unavailable, use original name */ }
+            const cached = await readCache(body.service);
+            if (cached) {
+              resolvedTool = resolveToolName(cached.tools, body.tool, body.service) ?? body.tool;
+            } else {
+              const allTools = await conn.client.listTools();
+              resolvedTool = resolveToolName(allTools.tools, body.tool, body.service) ?? body.tool;
+            }
+          } catch { /* cache/listTools unavailable, use original name */ }
           let sdkResult: Awaited<ReturnType<typeof conn.client.callTool>>;
           try {
             sdkResult = await Promise.race([
@@ -173,7 +180,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         try {
           const body = (await req.json()) as DaemonListToolsRequest;
           const conn = await pool.getConnection(body.service, getConfig());
-          const tools = await listToolsForService(conn.client);
+          const tools = await listToolsCached(conn.client, body.service);
           return Response.json({ success: true, result: tools });
         } catch (err) {
           return handleEndpointError(err, pool);
@@ -188,7 +195,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         try {
           const body = (await req.json()) as DaemonSchemaRequest;
           const conn = await pool.getConnection(body.service, getConfig());
-          const result = await getToolSchema(
+          const result = await getToolSchemaCached(
             conn.client,
             body.tool,
             body.service,
@@ -361,7 +368,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             if (connected) {
               try {
                 const conn = await pool.getConnection(name, getConfig());
-                const tools = await listToolsForService(conn.client);
+                const tools = await listToolsCached(conn.client, name);
                 toolCount = tools.length;
               } catch { /* connection may have gone stale */ }
             }
