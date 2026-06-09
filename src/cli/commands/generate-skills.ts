@@ -25,7 +25,7 @@ import type { ConflictMode, SkillTemplateInput } from "../../generation/types.ts
 import type { SchemaOutput } from "../../schema/types.ts";
 import type { ToolSummary } from "../../schema/types.ts";
 import { join } from "node:path";
-import { computeFullSchemaHash } from "../../generation/skill-hash.ts";
+import { computeSchemaHash } from "../../generation/skill-hash.ts";
 
 /**
  * Extract trigger keywords from tool descriptions.
@@ -236,8 +236,8 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     const descriptions = tools.map((t) => t.description);
     const triggerKeywords = extractTriggerKeywords(serviceName, descriptions);
 
-    // Compute schema hash from tool names + full input schemas for drift detection (M8)
-    const schemaHash = await computeFullSchemaHash(schemas);
+    // Compute schema hash from tool names + descriptions for drift detection
+    const schemaHash = await computeSchemaHash(tools);
 
     // H3: Only update generatedAt when the schema hash actually changes
     const outputDir = resolveOutputDir(serviceName, outputFlag);

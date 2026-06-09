@@ -66,16 +66,18 @@ export async function autoRegenerateSkills(
     // Build skill template input with metadata (L17)
     const schemaHash = await computeSchemaHash(filteredTools);
 
-    // Reuse existing timestamp if hash hasn't changed
+    // L7: Read existing SKILL.md once and reuse for hash comparison + manual section extraction
     const resolvedDir = outputDir ?? resolveOutputDir(serviceName);
-    const existingSkillPath2 = join(resolvedDir, "SKILL.md");
-    const existingFile2 = Bun.file(existingSkillPath2);
+    const existingSkillPath = join(resolvedDir, "SKILL.md");
+    const existingFile = Bun.file(existingSkillPath);
+    const existingContent = await existingFile.exists() ? await existingFile.text() : null;
+
+    // Reuse existing timestamp if hash hasn't changed
     let generatedAt = new Date().toISOString();
-    if (await existingFile2.exists()) {
-      const existingText = await existingFile2.text();
-      const existingHashMatch = existingText.match(/^schema_hash:\s*(\S+)/m);
+    if (existingContent) {
+      const existingHashMatch = existingContent.match(/^schema_hash:\s*(\S+)/m);
       if (existingHashMatch?.[1] === schemaHash) {
-        const existingAtMatch = existingText.match(/^generated_at:\s*(\S+)/m);
+        const existingAtMatch = existingContent.match(/^generated_at:\s*(\S+)/m);
         generatedAt = existingAtMatch?.[1] ?? generatedAt;
       }
     }
@@ -94,10 +96,7 @@ export async function autoRegenerateSkills(
     let skillMd = generateSkillMd(input);
 
     // Preserve manual sections from existing file
-    const existingSkillPath = join(resolvedDir, "SKILL.md");
-    const existingFile = Bun.file(existingSkillPath);
-    if (await existingFile.exists()) {
-      const existingContent = await existingFile.text();
+    if (existingContent) {
       const manualSections = extractManualSections(existingContent);
       if (manualSections.length > 0) {
         skillMd = injectManualSections(skillMd, manualSections);

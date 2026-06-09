@@ -9,8 +9,9 @@ import { computeSchemaHash } from "../../generation/skill-hash.ts";
 import { validateIdentifier } from "../../validation/pipelines.ts";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { CommandHandler } from "../../types/index.ts";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { cp, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
 
 /** Lazy getter for generate-skills module (L12 -- deduplicate dynamic import) */
 const getGenerateSkills = () => import("./generate-skills.ts");
@@ -58,7 +59,7 @@ export const handleSkills: CommandHandler = async (args: string[]) => {
           "SUBCOMMANDS:",
           "    list                          List all services with skill status",
           "    get <service>                 Output SKILL.md content to stdout",
-          "    install <service> --target    Install skill bundle to a directory",
+          "    install <service> --target [--force]  Install skill bundle to a directory",
           "    diff <service>                Preview what would change on regeneration",
           "    generate <service> [options]  Generate/regenerate skill files",
           "",
@@ -174,14 +175,6 @@ async function handleSkillsGet(args: string[]): Promise<void> {
     return;
   }
 
-  // H1: Validate service name to prevent path traversal
-  const check = validateIdentifier(serviceName, "service");
-  if (!check.valid) {
-    console.error(check.message);
-    process.exitCode = EXIT_CODES.VALIDATION;
-    return;
-  }
-
   let resolved: { skillDir: string; exists: boolean };
   try {
     resolved = await resolveSkillDir(serviceName);
@@ -211,17 +204,10 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
   const target = targetArg
     ? targetArg.split("=").slice(1).join("=")
     : targetIdx >= 0 ? args[targetIdx + 1] : undefined;
+  const force = args.includes("--force");
 
-  if (!serviceName || !target) {
-    console.error("Usage: mcp2cli skills install <service> --target <path>");
-    process.exitCode = EXIT_CODES.VALIDATION;
-    return;
-  }
-
-  // H1: Validate service name to prevent path traversal
-  const check = validateIdentifier(serviceName, "service");
-  if (!check.valid) {
-    console.error(check.message);
+  if (!serviceName || serviceName.startsWith("--") || !target) {
+    console.error("Usage: mcp2cli skills install <service> --target <path> [--force]");
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
   }
@@ -248,9 +234,29 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
     ? join(process.env.HOME ?? "", target.slice(1))
     : target;
 
-  // M7: Warn if overwriting existing skill bundle
+  // H2: Validate resolved target path
+  const absoluteTarget = resolve(resolvedTarget);
+  if (absoluteTarget.includes("..")) {
+    console.error("Target path must not contain '..' segments.");
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+  const home = process.env.HOME ?? homedir();
+  if (absoluteTarget === home) {
+    console.error("Target path must not be the home directory root. Specify a subdirectory.");
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+
+  // M4: Refuse to overwrite without --force
   const existingSkill = Bun.file(join(resolvedTarget, "SKILL.md"));
-  if (await existingSkill.exists()) {
+  const existingTarget = await existingSkill.exists();
+  if (existingTarget && !force) {
+    console.error(`Skill bundle already exists at ${resolvedTarget}. Use --force to overwrite.`);
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+  if (existingTarget && force) {
     console.error(`Overwriting existing skill bundle at ${resolvedTarget}`);
   }
 
@@ -264,10 +270,16 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
   process.exitCode = EXIT_CODES.SUCCESS;
 }
 
-// M9: Validate service name before delegating to generate-skills
+// M5/M9: Validate service name before delegating to generate-skills
 async function handleSkillsDiff(args: string[]): Promise<void> {
   if (!args[0]) {
     console.error("Usage: mcp2cli skills diff <service>");
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+  const check = validateIdentifier(args[0], "service");
+  if (!check.valid) {
+    console.error(check.message);
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
   }
@@ -275,10 +287,16 @@ async function handleSkillsDiff(args: string[]): Promise<void> {
   await handleGenerateSkills([args[0], "--diff"]);
 }
 
-// M9: Validate service name before delegating to generate-skills
+// M5/M9: Validate service name before delegating to generate-skills
 async function handleSkillsGenerate(args: string[]): Promise<void> {
   if (!args[0] || args[0].startsWith("--")) {
     console.error("Usage: mcp2cli skills generate <service> [options]");
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+  const check = validateIdentifier(args[0], "service");
+  if (!check.valid) {
+    console.error(check.message);
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
   }

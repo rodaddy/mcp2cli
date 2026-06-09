@@ -5,6 +5,7 @@ import {
   rejectOverlongInput,
   rejectControlChars,
   rejectPathTraversal,
+  rejectPathSeparators,
   rejectQueryFragment,
 } from "./validators.ts";
 
@@ -42,6 +43,7 @@ export function validateIdentifier(
     rejectOverlongInput,
     rejectControlChars,
     rejectPathTraversal,
+    rejectPathSeparators,
     rejectQueryFragment,
   ]);
 }

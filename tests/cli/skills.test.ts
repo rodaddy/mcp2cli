@@ -156,14 +156,26 @@ describe("skills install", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  // M7: Warns on overwrite
-  test("warns when overwriting existing skill bundle", async () => {
+  // M4: Refuses overwrite without --force
+  test("refuses overwrite without --force", async () => {
     await writeSkillFile("test-svc", "# original\n");
     const targetDir = join(testDir, "overwrite-target");
     await mkdir(targetDir, { recursive: true });
     await Bun.write(join(targetDir, "SKILL.md"), "# old content\n");
 
-    const { stdout } = await captureSkills(["install", "test-svc", "--target", targetDir]);
+    const { stdout, exitCode } = await captureSkills(["install", "test-svc", "--target", targetDir]);
+    expect(stdout).toContain("Use --force to overwrite");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // M4: Allows overwrite with --force
+  test("overwrites with --force flag", async () => {
+    await writeSkillFile("test-svc", "# original\n");
+    const targetDir = join(testDir, "overwrite-force");
+    await mkdir(targetDir, { recursive: true });
+    await Bun.write(join(targetDir, "SKILL.md"), "# old content\n");
+
+    const { stdout } = await captureSkills(["install", "test-svc", "--target", targetDir, "--force"]);
     expect(stdout).toContain("Overwriting existing skill bundle");
     expect(stdout).toContain("Installed test-svc");
   });
@@ -290,6 +302,10 @@ describe("skills list", () => {
       const parsed = JSON.parse(stdout);
       expect(parsed.services).toBeArray();
       expect(parsed.total).toBeNumber();
+      // L10: Validate actual content
+      expect(parsed.services).toHaveLength(1);
+      expect(parsed.services[0].service).toBe("test-svc");
+      expect(parsed.services[0].status).toBe("missing");
     } finally {
       if (origConfig !== undefined) {
         process.env.MCP2CLI_CONFIG = origConfig;

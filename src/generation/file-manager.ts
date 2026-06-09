@@ -2,7 +2,7 @@
  * Output path resolution, conflict handling, and section-marker merge.
  * Handles all file I/O for skill generation.
  */
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import type { ConflictMode, FileWritePlan } from "./types.ts";
 
@@ -20,7 +20,11 @@ export function resolveOutputDir(
 
   const envDir = process.env.PAI_SKILLS_DIR;
   if (envDir) {
-    return join(envDir, serviceName);
+    const resolved = resolve(envDir);
+    if (resolved.includes("..")) {
+      throw new Error("PAI_SKILLS_DIR must not contain '..'");
+    }
+    return join(resolved, serviceName);
   }
 
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";

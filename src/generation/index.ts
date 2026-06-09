@@ -50,4 +50,4 @@ export { autoRegenerateSkills } from "./auto-regen.ts";
 export type { AutoRegenResult } from "./auto-regen.ts";
 
 // Schema hashing
-export { computeSchemaHash, computeFullSchemaHash } from "./skill-hash.ts";
+export { computeSchemaHash } from "./skill-hash.ts";
