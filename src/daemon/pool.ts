@@ -169,6 +169,29 @@ export class ConnectionPool {
   }
 
   /**
+   * Pre-connect to all configured services at startup.
+   * Connections are established concurrently; failures are logged but don't block.
+   */
+  async preconnectAll(config: ServicesConfig): Promise<void> {
+    const names = Object.keys(config.services);
+    log.info("preconnect_start", { count: names.length });
+    const results = await Promise.allSettled(
+      names.map((name) => this.getConnection(name, config)),
+    );
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.filter((r) => r.status === "rejected").length;
+    log.info("preconnect_done", { connected: ok, failed });
+    if (failed > 0) {
+      results.forEach((r, i) => {
+        if (r.status === "rejected") {
+          const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+          log.warn("preconnect_failed", { service: names[i], error: msg });
+        }
+      });
+    }
+  }
+
+  /**
    * Connect to a WebSocket service with circuit breaker and stdio fallback.
    * Mirrors the HTTP fallback pattern for consistency.
    */

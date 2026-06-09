@@ -29,6 +29,7 @@ import type { AuthProvider, AuthContext } from "./auth-provider.ts";
 import type { MetricsCollector } from "./metrics.ts";
 import { ConfigManager, ConfigManagerError } from "./config-manager.ts";
 import { renderUI } from "./ui.ts";
+import pkg from "../../package.json";
 
 const log = createLogger("server");
 const reqLog = createLogger("daemon:request");
@@ -113,6 +114,14 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           callService = body.service;
           callTool = body.tool;
           callParams = body.params;
+
+          // 1/4: Request received from client
+          reqLog.info("request_in", {
+            service: callService,
+            tool: callTool,
+            params: body.params,
+          });
+
           const conn = await pool.getConnection(body.service, getConfig());
 
           // MEM-02: AbortSignal timeout on tool calls
@@ -144,7 +153,17 @@ export function createDaemonServer(opts: DaemonServerOptions) {
               return errorResponse("TOOL_BLOCKED", `Tool '${resolvedTool}' is blocked by access policy`, undefined, 403);
             }
           }
+
+          // 2/4: Forwarding request to MCP server
+          reqLog.info("mcp_call_start", {
+            service: callService,
+            tool: resolvedTool,
+            transport: callTransport,
+            ...(callResolvedTool ? { resolvedFrom: body.tool } : {}),
+          });
+
           let sdkResult: Awaited<ReturnType<typeof conn.client.callTool>>;
+          const mcpStartTime = performance.now();
           try {
             sdkResult = await Promise.race([
               conn.client.callTool({
@@ -163,6 +182,15 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           } finally {
             clearTimeout(timer);
           }
+          const mcpDuration = Math.round(performance.now() - mcpStartTime);
+
+          // 3/4: Response received from MCP server
+          reqLog.info("mcp_call_end", {
+            service: callService,
+            tool: resolvedTool,
+            mcpDuration,
+            success: true,
+          });
 
           success = true;
           const formatted = formatToolResult(
@@ -177,6 +205,15 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           callError = message;
+
+          // 3/4 (error path): MCP server error
+          reqLog.warn("mcp_call_end", {
+            service: callService,
+            tool: callTool,
+            success: false,
+            error: message,
+          });
+
           // MEM-02: map timeout errors to TOOL_TIMEOUT code
           if (err instanceof ToolError && err.message.includes("timed out")) {
             return errorResponse("TOOL_TIMEOUT", err.message, err.reason, 408);
@@ -184,13 +221,16 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           return handleEndpointError(err, pool);
         } finally {
           const duration = Math.round(performance.now() - startTime);
-          reqLog.info("tool_call", {
+
+          // 4/4: Response sent to client
+          reqLog.info("response_out", {
             service: callService,
             tool: callTool,
-            duration,
-            result: success ? "success" : "error",
+            totalDuration: duration,
+            success,
             ...(callError ? { error: callError } : {}),
           });
+
           metrics.onRequestEnd(callService, callTool, success, duration);
           auditToolCall({
             path: "daemon",
@@ -258,6 +298,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         const connectedServices = pool.serviceNames;
         return Response.json({
           status: "ok",
+          version: pkg.version,
           uptime: process.uptime(),
           configuredServices,
           connectedServices,

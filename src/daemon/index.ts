@@ -145,4 +145,12 @@ export async function startDaemon(): Promise<void> {
   if (idleTimeoutMs > 0) {
     idleTimer.touch();
   }
+
+  // Pre-connect all services at startup when enabled
+  if (process.env.MCP2CLI_PRECONNECT === "1") {
+    const liveConfig = configManager ? configManager.getServices() : config;
+    pool.preconnectAll(liveConfig).catch((err) => {
+      log.error("preconnect_error", { error: err instanceof Error ? err.message : String(err) });
+    });
+  }
 }

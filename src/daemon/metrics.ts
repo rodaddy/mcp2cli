@@ -3,6 +3,9 @@
  * Exposes request metrics, connection pool state, and system health
  * in Prometheus text exposition format at GET /metrics.
  */
+import pkg from "../../package.json";
+
+const VERSION = pkg.version;
 
 /** Histogram bucket boundaries for request duration (ms) */
 const DURATION_BUCKETS = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000];
@@ -186,7 +189,7 @@ export class MetricsCollector {
     // -- Info metric --
     lines.push("# HELP mcp2cli_info Build info");
     lines.push("# TYPE mcp2cli_info gauge");
-    lines.push(`mcp2cli_info{version="0.2.0"} 1`);
+    lines.push(`mcp2cli_info{version="${VERSION}"} 1`);
 
     lines.push("");
     return lines.join("\n");
