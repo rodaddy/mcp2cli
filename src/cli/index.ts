@@ -11,6 +11,7 @@ import { handleBootstrap } from "./commands/bootstrap.ts";
 import { handleGenerateSkills } from "./commands/generate-skills.ts";
 import { handleCache } from "./commands/cache.ts";
 import { handleGrep } from "./commands/grep.ts";
+import { handleAudit } from "./commands/audit.ts";
 import { handleBatch } from "./commands/batch.ts";
 import { ConfigError } from "../config/index.ts";
 import { ConnectionError } from "../connection/index.ts";
@@ -46,6 +47,7 @@ const COMMANDS: Record<string, CommandHandler> = {
   cache: handleCache,
   grep: handleGrep,
   search: handleGrep,
+  audit: handleAudit,
   batch: handleBatch,
   daemon: handleDaemonDispatch,
   bootstrap: handleBootstrap,

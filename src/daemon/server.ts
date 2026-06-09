@@ -17,6 +17,7 @@ import type {
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
 import { listToolsCached, getToolSchemaCached, resolveToolNameCached } from "../schema/cached.ts";
+import { auditToolCall } from "../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../access/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { ToolError } from "../invocation/errors.ts";
@@ -102,10 +103,16 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         let callService = "unknown";
         let callTool = "unknown";
         let success = false;
+        let callParams: Record<string, unknown> | undefined;
+        let callResult: unknown;
+        let callError: string | undefined;
+        let callResolvedTool: string | undefined;
+        let callTransport: string | undefined;
         try {
           const body = (await req.json()) as DaemonCallRequest;
           callService = body.service;
           callTool = body.tool;
+          callParams = body.params;
           const conn = await pool.getConnection(body.service, getConfig());
 
           // MEM-02: AbortSignal timeout on tool calls
@@ -116,17 +123,24 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), timeout);
 
+          // Resolve transport type from service config
+          if (serviceConfig) {
+            callTransport = serviceConfig.backend;
+          }
+
           let resolvedTool = body.tool;
           try {
             const { resolvedName } = await resolveToolNameCached(conn.client, body.tool, body.service);
             resolvedTool = resolvedName;
           } catch { /* cache/listTools unavailable, use original name */ }
+          callResolvedTool = resolvedTool !== body.tool ? resolvedTool : undefined;
 
           // Access control on resolved tool name (M7)
           if (serviceConfig) {
             const policy = extractPolicy(serviceConfig);
             const accessResult = checkToolAccess(resolvedTool, policy);
             if (!accessResult.allowed) {
+              callError = "Tool blocked by access policy";
               return errorResponse("TOOL_BLOCKED", `Tool '${resolvedTool}' is blocked by access policy`, undefined, 403);
             }
           }
@@ -150,21 +164,19 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             clearTimeout(timer);
           }
 
-          const duration = Math.round(performance.now() - startTime);
-          reqLog.info("tool_call", { service: callService, tool: callTool, duration, result: "success" });
           success = true;
           const formatted = formatToolResult(
             sdkResult as Parameters<typeof formatToolResult>[0],
           );
+          callResult = formatted.result;
           const response: DaemonCallResponse = {
             success: true,
             result: formatted.result,
           };
           return Response.json(response);
         } catch (err) {
-          const duration = Math.round(performance.now() - startTime);
           const message = err instanceof Error ? err.message : String(err);
-          reqLog.info("tool_call", { service: callService, tool: callTool, duration, result: "error", error: message });
+          callError = message;
           // MEM-02: map timeout errors to TOOL_TIMEOUT code
           if (err instanceof ToolError && err.message.includes("timed out")) {
             return errorResponse("TOOL_TIMEOUT", err.message, err.reason, 408);
@@ -172,7 +184,26 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           return handleEndpointError(err, pool);
         } finally {
           const duration = Math.round(performance.now() - startTime);
+          reqLog.info("tool_call", {
+            service: callService,
+            tool: callTool,
+            duration,
+            result: success ? "success" : "error",
+            ...(callError ? { error: callError } : {}),
+          });
           metrics.onRequestEnd(callService, callTool, success, duration);
+          auditToolCall({
+            path: "daemon",
+            service: callService,
+            tool: callTool,
+            resolvedTool: callResolvedTool,
+            transport: callTransport,
+            params: callParams,
+            result: callResult,
+            durationMs: duration,
+            success,
+            error: callError,
+          });
           idleTimer.onRequestEnd();
         }
       }

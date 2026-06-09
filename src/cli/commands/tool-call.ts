@@ -11,6 +11,7 @@ import { connectToService, connectToHttpService } from "../../connection/index.t
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { getToolSchemaCached, resolveToolNameCached } from "../../schema/cached.ts";
+import { auditToolCall, flushAuditQueue } from "../../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
@@ -127,6 +128,9 @@ export async function handleToolCall(args: string[]): Promise<void> {
       return;
     }
 
+    // M5: No CLI-side audit for daemon path -- the daemon already writes a full audit entry
+    // in its own finally block with resolvedTool, transport, params, and result.
+    // CLI-side audit here would only duplicate log volume with no additional data.
     const result = await callViaDaemon({
       service: parsed.value.serviceName,
       tool: parsed.value.toolName,
@@ -166,9 +170,18 @@ export async function handleToolCall(args: string[]): Promise<void> {
       ? await connectToWebSocketService(service)
       : await connectToService(service);
 
+  const directStartTime = performance.now();
+  let directSuccess = false;
+  let directResult: unknown;
+  let directError: string | undefined;
+  let directResolvedTool: string | undefined;
+  let dryRun = false;
+  const directTransport = service.backend;
+
   try {
     // Dry-run interception (inside try/finally so connection closes)
     if (parsed.value.dryRun) {
+      dryRun = true;
       const schema = await getToolSchemaCached(
         connection.client,
         parsed.value.toolName,
@@ -201,6 +214,8 @@ export async function handleToolCall(args: string[]): Promise<void> {
       parsed.value.toolName,
       parsed.value.serviceName,
     );
+    directResolvedTool = resolvedName !== parsed.value.toolName ? resolvedName : undefined;
+
     const result = await connection.client.callTool({
       name: resolvedName,
       arguments: parsed.value.params,
@@ -208,6 +223,8 @@ export async function handleToolCall(args: string[]): Promise<void> {
 
     // 7. Format result (throws ToolError if isError=true)
     const output = formatToolResult(result as Parameters<typeof formatToolResult>[0]);
+    directResult = output.result;
+    directSuccess = true;
 
     // 8. Field masking on successful response
     let outputData = output.result;
@@ -220,7 +237,30 @@ export async function handleToolCall(args: string[]): Promise<void> {
     }
     console.log(formatOutput(outputData, parsed.value.format));
     process.exitCode = EXIT_CODES.SUCCESS;
+  } catch (err) {
+    directError = err instanceof Error ? err.message : String(err);
+    throw err;
   } finally {
+    // L13: close connection first -- audit writes don't need the MCP connection,
+    // and flushing the queue should not block connection teardown.
     await connection.close();
+
+    // Skip audit for dry-run -- no actual tool invocation occurred
+    if (!dryRun) {
+      const directDuration = Math.round(performance.now() - directStartTime);
+      auditToolCall({
+        path: "cli",
+        service: parsed.value.serviceName,
+        tool: parsed.value.toolName,
+        resolvedTool: directResolvedTool,
+        transport: directTransport,
+        params: parsed.value.params,
+        result: directResult,
+        durationMs: directDuration,
+        success: directSuccess,
+        error: directError,
+      });
+      await flushAuditQueue();
+    }
   }
 }
