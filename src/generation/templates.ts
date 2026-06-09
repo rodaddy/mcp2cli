@@ -30,6 +30,15 @@ export function generateSkillMd(input: SkillTemplateInput): string {
   lines.push("---");
   lines.push(`name: ${input.serviceName}`);
   lines.push(`description: ${input.description}`);
+  if (input.toolCount !== undefined) {
+    lines.push(`tool_count: ${input.toolCount}`);
+  }
+  if (input.generatedAt) {
+    lines.push(`generated_at: ${input.generatedAt}`);
+  }
+  if (input.schemaHash) {
+    lines.push(`schema_hash: ${input.schemaHash}`);
+  }
   lines.push("triggers:");
   for (const keyword of input.triggerKeywords) {
     lines.push(`  - ${keyword}`);

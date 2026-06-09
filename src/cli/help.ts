@@ -73,6 +73,11 @@ export function printHelp(args?: string[]): void {
             usage: "mcp2cli audit <tail [n]|search <pattern>|stats|clear|path>",
           },
           {
+            name: "skills",
+            description: "Manage service skill bundles (list, get, install, diff, generate)",
+            usage: "mcp2cli skills <list|get|install|diff|generate>",
+          },
+          {
             name: "batch",
             description: "Execute multiple tool calls from NDJSON stdin",
             usage: "echo '{\"service\":\"n8n\",\"tool\":\"n8n_list_workflows\",\"params\":{}}' | mcp2cli batch [--parallel]",
@@ -105,6 +110,7 @@ export function printHelp(args?: string[]): void {
       "    cache             Manage schema cache (clear, status)",
       '    search           Search tool names/descriptions across cached services',
       "    audit            View and manage tool call audit logs",
+      "    skills           Manage service skill bundles (list, get, install)",
       "    batch            Execute multiple tool calls from NDJSON stdin",
       "",
       "EXAMPLES:",

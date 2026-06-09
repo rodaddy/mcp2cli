@@ -235,11 +235,22 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     const descriptions = tools.map((t) => t.description);
     const triggerKeywords = extractTriggerKeywords(serviceName, descriptions);
 
+    // Compute schema hash from tool names for drift detection
+    const toolNamesHash = await (async () => {
+      const surface = tools.map((t) => t.name).sort().join(",");
+      const data = new TextEncoder().encode(surface);
+      const buf = await crypto.subtle.digest("SHA-256", data);
+      return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+    })();
+
     const input: SkillTemplateInput = {
       serviceName,
       description: `MCP tools for ${serviceName}`,
       tools,
       triggerKeywords,
+      generatedAt: new Date().toISOString(),
+      schemaHash: toolNamesHash,
+      toolCount: tools.length,
     };
 
     // Resolve output directory
