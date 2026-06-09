@@ -170,22 +170,38 @@ export class ConnectionPool {
 
   /**
    * Pre-connect to all configured services at startup.
-   * Connections are established concurrently; failures are logged but don't block.
+   * Connections are batched (4 at a time) with a 15s per-service timeout.
+   * Failures are logged but don't block startup.
    */
   async preconnectAll(config: ServicesConfig): Promise<void> {
+    const PRECONNECT_CONCURRENCY = 4;
+    const PRECONNECT_TIMEOUT_MS = 15_000;
+
+    const withTimeout = (name: string) => Promise.race([
+      this.getConnection(name, config),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`preconnect timeout: ${name}`)), PRECONNECT_TIMEOUT_MS),
+      ),
+    ]);
+
     const names = Object.keys(config.services);
     log.info("preconnect_start", { count: names.length });
-    const results = await Promise.allSettled(
-      names.map((name) => this.getConnection(name, config)),
-    );
-    const ok = results.filter((r) => r.status === "fulfilled").length;
-    const failed = results.filter((r) => r.status === "rejected").length;
+
+    const allResults: PromiseSettledResult<McpConnection>[] = [];
+    for (let i = 0; i < names.length; i += PRECONNECT_CONCURRENCY) {
+      const batch = names.slice(i, i + PRECONNECT_CONCURRENCY);
+      const batchResults = await Promise.allSettled(batch.map(withTimeout));
+      allResults.push(...batchResults);
+    }
+
+    const ok = allResults.filter((r) => r.status === "fulfilled").length;
+    const failed = allResults.filter((r) => r.status === "rejected").length;
     log.info("preconnect_done", { connected: ok, failed });
     if (failed > 0) {
-      results.forEach((r, i) => {
+      allResults.forEach((r, idx) => {
         if (r.status === "rejected") {
           const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-          log.warn("preconnect_failed", { service: names[i], error: msg });
+          log.warn("preconnect_failed", { service: names[idx], error: msg });
         }
       });
     }

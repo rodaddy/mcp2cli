@@ -10,8 +10,7 @@ import { constants } from "node:fs";
 import { getDaemonPaths, getRemoteConfig } from "../daemon/paths.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { getDaemonStatus, cleanStaleDaemon } from "./liveness.ts";
-import type { ServiceSource } from "../config/schema.ts";
-import type { ServicesConfig } from "../config/schema.ts";
+import type { ServiceSource, ServicesConfig } from "../config/index.ts";
 import type { DaemonPaths } from "../daemon/types.ts";
 import type {
   DaemonCallRequest,
@@ -23,6 +22,7 @@ import type {
 const STARTUP_TIMEOUT_MS = 10_000;
 const STARTUP_POLL_MS = 50;
 const REQUEST_TIMEOUT_MS = 60_000;
+const REMOTE_CONNECT_TIMEOUT_MS = 10_000;
 const STALE_LOCK_THRESHOLD_MS = 30_000;
 
 /** Cached local token to avoid re-reading tokens.json on every request. */
@@ -188,7 +188,11 @@ export async function ensureDaemon(paths: DaemonPaths): Promise<void> {
   }
 }
 
-/** Cached local config for source routing. */
+/**
+ * Cached local config for source routing.
+ * Intentionally process-lifetime cached: CLI is short-lived, so re-reading
+ * config on every request adds latency with no benefit.
+ */
 let cachedConfig: ServicesConfig | null = null;
 
 async function getLocalConfig(): Promise<ServicesConfig | null> {
@@ -239,8 +243,8 @@ async function fetchLocal(
   return (await response.json()) as DaemonResponse;
 }
 
-const REMOTE_RETRIES = 3;
-const REMOTE_BACKOFF_BASE_MS = 500;
+const REMOTE_RETRIES = parseInt(process.env.MCP2CLI_REMOTE_RETRIES ?? "3", 10);
+const REMOTE_BACKOFF_BASE_MS = parseInt(process.env.MCP2CLI_REMOTE_BACKOFF_MS ?? "500", 10);
 
 async function fetchRemote(
   path: string,
@@ -262,10 +266,27 @@ async function fetchRemote(
         method: "POST",
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(REMOTE_CONNECT_TIMEOUT_MS),
       });
-      return (await response.json()) as DaemonResponse;
+
+      // Auth errors are permanent -- don't retry (wrong token won't become right)
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`Remote auth failed (${response.status})`);
+      }
+
+      const result = (await response.json()) as DaemonResponse;
+
+      // Application-level connection errors should trigger fallback
+      if (!result.success && result.error?.code === "CONNECTION_ERROR") {
+        throw new Error(result.error.message);
+      }
+
+      return result;
     } catch (err) {
+      // Auth errors are permanent -- bail immediately, don't retry
+      if (err instanceof Error && err.message.startsWith("Remote auth failed")) {
+        throw err;
+      }
       lastError = err;
       if (attempt < REMOTE_RETRIES - 1) {
         const delay = REMOTE_BACKOFF_BASE_MS * Math.pow(2, attempt);

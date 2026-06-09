@@ -97,8 +97,8 @@ export async function startDaemon(): Promise<void> {
     }, 10_000);
 
     try {
-      // Stop accepting new connections
-      server.stop(true);
+      // Stop accepting new connections, drain in-flight requests
+      server.stop();
 
       // Close all MCP connections (reuses McpTransport.close() multi-step shutdown)
       await pool.closeAll();

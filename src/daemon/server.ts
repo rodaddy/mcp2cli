@@ -17,7 +17,7 @@ import type {
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
 import { listToolsCached, getToolSchemaCached, resolveToolNameCached } from "../schema/cached.ts";
-import { auditToolCall } from "../logger/audit.ts";
+import { auditToolCall, sanitizeParams } from "../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../access/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { ToolError } from "../invocation/errors.ts";
@@ -29,7 +29,7 @@ import type { AuthProvider, AuthContext } from "./auth-provider.ts";
 import type { MetricsCollector } from "./metrics.ts";
 import { ConfigManager, ConfigManagerError } from "./config-manager.ts";
 import { renderUI } from "./ui.ts";
-import pkg from "../../package.json";
+import pkg from "../../package.json" with { type: "json" };
 
 const log = createLogger("server");
 const reqLog = createLogger("daemon:request");
@@ -119,7 +119,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           reqLog.info("request_in", {
             service: callService,
             tool: callTool,
-            params: body.params,
+            params: sanitizeParams(body.params ?? {}),
           });
 
           const conn = await pool.getConnection(body.service, getConfig());
@@ -209,7 +209,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           // 3/4 (error path): MCP server error
           reqLog.warn("mcp_call_end", {
             service: callService,
-            tool: callTool,
+            tool: callResolvedTool ?? callTool,
             success: false,
             error: message,
           });

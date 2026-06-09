@@ -5,6 +5,7 @@ export {
   WebSocketServiceSchema,
   ServiceSchema,
   ServicesConfigSchema,
+  SourceSchema,
 } from "./schema.ts";
 
 export type {
@@ -14,6 +15,7 @@ export type {
   WebSocketService,
   ServiceConfig,
   ServicesConfig,
+  ServiceSource,
 } from "./schema.ts";
 
 export { loadConfig, getConfigPath } from "./loader.ts";
