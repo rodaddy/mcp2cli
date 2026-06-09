@@ -128,59 +128,35 @@ export async function handleToolCall(args: string[]): Promise<void> {
       return;
     }
 
-    const daemonStartTime = performance.now();
-    let daemonSuccess = false;
-    let daemonResult: unknown;
-    let daemonError: string | undefined;
+    // M5: No CLI-side audit for daemon path -- the daemon already writes a full audit entry
+    // in its own finally block with resolvedTool, transport, params, and result.
+    // CLI-side audit here would only duplicate log volume with no additional data.
+    const result = await callViaDaemon({
+      service: parsed.value.serviceName,
+      tool: parsed.value.toolName,
+      params: parsed.value.params,
+    });
 
-    try {
-      const result = await callViaDaemon({
-        service: parsed.value.serviceName,
-        tool: parsed.value.toolName,
-        params: parsed.value.params,
-      });
-
-      if (result.success) {
-        daemonSuccess = true;
-        daemonResult = result.result;
-        // Field masking on successful daemon response
-        let outputData = result.result;
-        if (parsed.value.fields.length > 0) {
-          const { masked, missing } = applyFieldMask(result.result, parsed.value.fields);
-          for (const field of missing) {
-            process.stderr.write(`warning: field "${field}" not found in response\n`);
-          }
-          outputData = masked;
+    if (result.success) {
+      // Field masking on successful daemon response
+      let outputData = result.result;
+      if (parsed.value.fields.length > 0) {
+        const { masked, missing } = applyFieldMask(result.result, parsed.value.fields);
+        for (const field of missing) {
+          process.stderr.write(`warning: field "${field}" not found in response\n`);
         }
-        console.log(formatOutput(outputData, parsed.value.format));
-        process.exitCode = EXIT_CODES.SUCCESS;
-      } else {
-        daemonError = result.error.message;
-        printError({
-          error: true,
-          code: result.error.code,
-          message: result.error.message,
-          ...(result.error.reason ? { reason: result.error.reason } : {}),
-        });
-        process.exitCode = mapErrorCodeToExit(result.error.code);
+        outputData = masked;
       }
-    } catch (err) {
-      daemonError = err instanceof Error ? err.message : String(err);
-      throw err;
-    } finally {
-      // CLI-side audit for daemon path (crash resilience + caller identification)
-      const daemonDuration = Math.round(performance.now() - daemonStartTime);
-      auditToolCall({
-        path: "cli",
-        service: parsed.value.serviceName,
-        tool: parsed.value.toolName,
-        params: parsed.value.params,
-        result: daemonResult,
-        durationMs: daemonDuration,
-        success: daemonSuccess,
-        error: daemonError,
+      console.log(formatOutput(outputData, parsed.value.format));
+      process.exitCode = EXIT_CODES.SUCCESS;
+    } else {
+      printError({
+        error: true,
+        code: result.error.code,
+        message: result.error.message,
+        ...(result.error.reason ? { reason: result.error.reason } : {}),
       });
-      await flushAuditQueue();
+      process.exitCode = mapErrorCodeToExit(result.error.code);
     }
     return;
   }
@@ -265,6 +241,10 @@ export async function handleToolCall(args: string[]): Promise<void> {
     directError = err instanceof Error ? err.message : String(err);
     throw err;
   } finally {
+    // L13: close connection first -- audit writes don't need the MCP connection,
+    // and flushing the queue should not block connection teardown.
+    await connection.close();
+
     // Skip audit for dry-run -- no actual tool invocation occurred
     if (!dryRun) {
       const directDuration = Math.round(performance.now() - directStartTime);
@@ -282,6 +262,5 @@ export async function handleToolCall(args: string[]): Promise<void> {
       });
       await flushAuditQueue();
     }
-    await connection.close();
   }
 }

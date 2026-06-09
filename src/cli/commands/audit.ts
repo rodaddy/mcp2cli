@@ -21,7 +21,9 @@ async function readAuditEntries(opts?: { fromEnd?: number }): Promise<ReadResult
   let lines: string[];
 
   if (opts?.fromEnd && opts.fromEnd > 0) {
-    // Efficient tail: read estimated bytes from end
+    // Efficient tail: read estimated bytes from end.
+    // L9: estimate assumes ~2KB/line; may undershoot for very large entries.
+    // Falls back to full read when estimate exceeds file size, so worst case is reading the whole file.
     const fileSize = file.size;
     const estimatedBytes = opts.fromEnd * 2048;
     if (estimatedBytes < fileSize) {

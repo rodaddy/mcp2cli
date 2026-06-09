@@ -8,7 +8,7 @@
  * Concurrent processes may race on rotation; rename failures are caught and ignored
  * so the worst case is one lost backup cycle, not data loss.
  */
-import { mkdir, stat, rename, unlink, appendFile, chmod } from "node:fs/promises";
+import { mkdir, stat, rename, unlink, open, chmod } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { createLogger } from "./index.ts";
@@ -24,9 +24,19 @@ const MIN_MAX_SIZE_BYTES = 1_048_576;
 /** Max length for params/response in audit entries */
 const MAX_FIELD_LENGTH = 2000;
 
+/** Max recursion depth for sanitizeValue/sanitizeParams */
+const MAX_SANITIZE_DEPTH = 10;
+
+/**
+ * Shared sensitive keyword alternation -- single source of truth for all regex uses.
+ * M1: `auth` narrowed to `auth[_-]|authorization|authentication` to avoid matching `author`/`authority`.
+ * L7: extracted from three inline copies.
+ */
+const SENSITIVE_KEYS =
+  "token|secret|password|api[_-]?key|auth[_-]|authorization|authentication|credential|bearer|private[_-]?key|access[_-]?key|session[_-]?id|cookie|signing[_-]?key|passphrase";
+
 /** Patterns that suggest sensitive content -- applied to KEYS only, never values */
-const SENSITIVE_PATTERNS =
-  /(?:token|secret|password|api[_-]?key|auth|credential|bearer|private[_-]?key|access[_-]?key|session[_-]?id|cookie|signing[_-]?key|passphrase)/i;
+const SENSITIVE_PATTERNS = new RegExp(`(?:${SENSITIVE_KEYS})`, "i");
 
 export interface AuditEntry {
   timestamp: string;
@@ -66,16 +76,18 @@ function resolveMaxSize(): number {
  * - Arrays have each element recursed.
  * - Strings are truncated if too long.
  * - Key-level sensitive pattern checks happen in sanitizeParams, NOT here.
+ * M3: depth-limited to MAX_SANITIZE_DEPTH to prevent stack overflow on deeply nested input.
  */
-function sanitizeValue(value: unknown): unknown {
+function sanitizeValue(value: unknown, depth = 0): unknown {
+  if (depth > MAX_SANITIZE_DEPTH) return "[nested too deep]";
   if (value === null || value === undefined) return value;
 
   if (Array.isArray(value)) {
-    return value.map((el) => sanitizeValue(el));
+    return value.map((el) => sanitizeValue(el, depth + 1));
   }
 
   if (typeof value === "object") {
-    return sanitizeParams(value as Record<string, unknown>);
+    return sanitizeParams(value as Record<string, unknown>, depth + 1);
   }
 
   if (typeof value === "string" && value.length > MAX_FIELD_LENGTH) {
@@ -85,13 +97,14 @@ function sanitizeValue(value: unknown): unknown {
   return value;
 }
 
-function sanitizeParams(params: Record<string, unknown>): Record<string, unknown> {
+function sanitizeParams(params: Record<string, unknown>, depth = 0): Record<string, unknown> {
+  if (depth > MAX_SANITIZE_DEPTH) return { "[nested too deep]": true };
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(params)) {
     if (SENSITIVE_PATTERNS.test(key)) {
       sanitized[key] = "[REDACTED]";
     } else {
-      sanitized[key] = sanitizeValue(value);
+      sanitized[key] = sanitizeValue(value, depth);
     }
   }
   return sanitized;
@@ -114,8 +127,9 @@ function sanitizeResponseSummary(summary: string): string {
     return summary;
   } catch {
     // Truncated or invalid JSON -- regex scan for sensitive key patterns
+    // L7: uses shared SENSITIVE_KEYS. M4: matches non-string values too.
     return summary.replace(
-      /("(?:token|secret|password|api[_-]?key|auth|credential|bearer|private[_-]?key|access[_-]?key|session[_-]?id|cookie|signing[_-]?key|passphrase)")\s*:\s*"[^"]*"/gi,
+      new RegExp(`("(?:${SENSITIVE_KEYS})")\\s*:\\s*(?:"[^"]*"|[^,}\\]\\s]+)`, "gi"),
       '$1:"[REDACTED]"',
     );
   }
@@ -126,8 +140,9 @@ function sanitizeResponseSummary(summary: string): string {
  * Redacts values following sensitive key patterns and truncates.
  */
 function sanitizeError(error: string): string {
+  // L7: uses shared SENSITIVE_KEYS. L6: `[^\s;,&]+` instead of `\S+` to stop at common delimiters.
   const redacted = error.replace(
-    /(?:token|secret|password|api[_-]?key|auth|credential|bearer|private[_-]?key|access[_-]?key|session[_-]?id|cookie|signing[_-]?key|passphrase)[=:]\s*\S+/gi,
+    new RegExp(`(?:${SENSITIVE_KEYS})[=:]\\s*[^\\s;,&]+`, "gi"),
     (match) => {
       const eqIdx = match.search(/[=:]/);
       return match.slice(0, eqIdx + 1) + "[REDACTED]";
@@ -225,8 +240,14 @@ export function writeAuditEntry(entry: AuditEntry): void {
         error: entry.error ? sanitizeError(entry.error) : undefined,
       };
 
-      await appendFile(filePath, JSON.stringify(sanitizedEntry) + "\n");
-      await chmod(filePath, 0o600).catch(() => {});
+      // M2: open with mode 0o600 creates file atomically with correct permissions (no TOCTOU).
+      // L8: no per-write chmod needed -- mode is set at creation time.
+      const fd = await open(filePath, "a", 0o600);
+      try {
+        await fd.appendFile(JSON.stringify(sanitizedEntry) + "\n");
+      } finally {
+        await fd.close();
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn("audit_write_failed", { error: message });

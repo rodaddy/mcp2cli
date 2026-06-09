@@ -102,21 +102,25 @@ describe("writeAuditEntry", () => {
   });
 
   test("truncates long response summaries", async () => {
-    const longResponse = "x".repeat(5000);
-    writeAuditEntry({
-      timestamp: "2026-06-08T12:00:00Z",
+    // L10: test via auditToolCall which calls summarizeResponse (the actual truncation path)
+    const bigResult = { data: "x".repeat(5000) };
+    auditToolCall({
       path: "daemon",
       service: "svc",
       tool: "big_tool",
-      responseSummary: longResponse,
+      result: bigResult,
       durationMs: 100,
       success: true,
     });
     await flushAuditQueue();
 
     const entries = await readAuditFile();
-    // responseSummary is sanitized (not raw), may be wrapped in JSON
-    expect(entries[0]!.responseSummary!.length).toBeLessThanOrEqual(5100);
+    expect(entries).toHaveLength(1);
+    // MAX_FIELD_LENGTH is 2000, so responseSummary must be truncated below the full JSON length
+    const fullJson = JSON.stringify(bigResult);
+    expect(fullJson.length).toBeGreaterThan(2000);
+    expect(entries[0]!.responseSummary!.length).toBeLessThanOrEqual(2100); // 2000 + truncation marker
+    expect(entries[0]!.responseSummary).toContain("...(truncated)");
   });
 
   test("recursively sanitizes nested objects with sensitive keys", async () => {
@@ -239,6 +243,58 @@ describe("writeAuditEntry", () => {
     expect(p.signing_key).toBe("[REDACTED]");
     expect(p.passphrase).toBe("[REDACTED]");
     expect(p.normal_field).toBe("visible");
+  });
+
+  test("M1: does not false-positive redact 'author' or 'authority' keys", async () => {
+    writeAuditEntry({
+      timestamp: "2026-06-08T12:00:00Z",
+      path: "cli",
+      service: "test",
+      tool: "auth_test",
+      params: {
+        author: "Jane Doe",
+        authority: "admin-panel",
+        auth_token: "should-be-redacted",
+        authorization: "Bearer xyz",
+        authentication: "basic abc",
+      },
+      durationMs: 10,
+      success: true,
+    });
+    await flushAuditQueue();
+
+    const entries = await readAuditFile();
+    const p = entries[0]!.params!;
+    expect(p.author).toBe("Jane Doe");
+    expect(p.authority).toBe("admin-panel");
+    expect(p.auth_token).toBe("[REDACTED]");
+    expect(p.authorization).toBe("[REDACTED]");
+    expect(p.authentication).toBe("[REDACTED]");
+  });
+
+  test("M3: caps recursion depth to prevent stack overflow", async () => {
+    // Build an object nested 15 levels deep (exceeds MAX_SANITIZE_DEPTH of 10)
+    let obj: Record<string, unknown> = { leaf: "value" };
+    for (let i = 0; i < 15; i++) {
+      obj = { nested: obj };
+    }
+
+    writeAuditEntry({
+      timestamp: "2026-06-08T12:00:00Z",
+      path: "cli",
+      service: "test",
+      tool: "deep_test",
+      params: obj,
+      durationMs: 10,
+      success: true,
+    });
+    await flushAuditQueue();
+
+    const entries = await readAuditFile();
+    expect(entries).toHaveLength(1);
+    // Somewhere in the chain, "[nested too deep]" should appear
+    const json = JSON.stringify(entries[0]!.params);
+    expect(json).toContain("[nested too deep]");
   });
 });
 
