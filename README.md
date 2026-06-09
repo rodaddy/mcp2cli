@@ -630,8 +630,8 @@ In addition to the [base environment variables](#environment-variables), network
 |----------|---------|-------------|
 | `MCP2CLI_LISTEN_HOST` | (unset) | Bind address for TCP mode. Setting this enables TCP instead of Unix socket. Use `0.0.0.0` to listen on all interfaces |
 | `MCP2CLI_LISTEN_PORT` | `9500` | TCP port when `MCP2CLI_LISTEN_HOST` is set |
-| `MCP2CLI_AUTH_TOKEN` | (unset) | Bearer token for TCP authentication. Required for production deployments |
-| `MCP2CLI_REMOTE_URL` | (unset) | URL of remote mcp2cli daemon (e.g. `http://mcp-server:9500`). Enables remote client mode |
+| `MCP2CLI_AUTH_TOKEN` | (unset) | Bearer token for TCP authentication. Required for production deployments. Alias: `MCP_TOKEN` |
+| `MCP2CLI_REMOTE_URL` | (unset) | URL of remote mcp2cli daemon (e.g. `https://mcp2cli.rodaddy.live`). Enables remote client mode. Alias: `MCP_HOST` |
 | `MCP2CLI_CONFIG` | `~/.config/mcp2cli/services.json` | Path to service definitions (useful for server-side config in `/etc/mcp2cli/`) |
 | `MCP2CLI_TOKENS_FILE` | `~/.config/mcp2cli/tokens.json` | Path to multi-user token/RBAC config |
 | `MCP2CLI_CREDENTIALS_FILE` | `~/.config/mcp2cli/credentials.json` | Path to per-identity credential mappings |

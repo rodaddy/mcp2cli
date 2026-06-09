@@ -221,7 +221,7 @@ export class TokenAuthProvider implements AuthProvider {
     }
 
     // Fall back to legacy single-token env var
-    const envToken = process.env.MCP2CLI_AUTH_TOKEN;
+    const envToken = process.env.MCP2CLI_AUTH_TOKEN ?? process.env.MCP_TOKEN;
     if (envToken) {
       log.info("using_legacy_token", { source: "MCP2CLI_AUTH_TOKEN" });
       return TokenAuthProvider.fromEnvToken(envToken);
