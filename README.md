@@ -255,7 +255,178 @@ mcp2cli n8n n8n_get_workflow --params '{"id": "abc123"}'
 
 This pattern keeps MCP tool definitions out of the agent's system prompt entirely. The agent only pays context cost when it actually needs to call a tool, and even then only for the specific tool's schema -- not all tools from all servers.
 
-## v1.3 Advanced Features
+## Multi-User Authentication
+
+mcp2cli supports multi-user RBAC via `~/.config/mcp2cli/tokens.json`. Each user or agent gets a bearer token with a role.
+
+### tokens.json
+
+```json
+{
+  "tokens": [
+    {
+      "id": "rico",
+      "token": "your-admin-token-here",
+      "role": "admin",
+      "description": "Full admin access",
+      "username": "rico",
+      "password": "your-web-ui-password"
+    },
+    {
+      "id": "skippy",
+      "token": "your-agent-token-here",
+      "role": "agent",
+      "description": "AI agent - tools + read, no config mutations"
+    },
+    {
+      "id": "viewer01",
+      "token": "your-viewer-token-here",
+      "role": "viewer",
+      "description": "Read-only access"
+    }
+  ]
+}
+```
+
+Generate secure tokens: `openssl rand -base64 32`
+
+### RBAC Roles
+
+| Permission | viewer | agent | admin |
+|------------|--------|-------|-------|
+| List services, status | yes | yes | yes |
+| Call tools, list tools, schema | no | yes | yes |
+| Read credentials | no | yes | yes |
+| Add/update/remove services | no | no | yes |
+| Write credentials, manage groups | no | no | yes |
+| Reload, import, shutdown | no | no | yes |
+
+The `username`/`password` fields enable web UI login at the daemon's root URL. Token-based auth (Bearer header) works for all API and CLI access.
+
+### Fallback Behavior
+
+- **No tokens.json, no env token:** Auth disabled, all requests treated as admin (backward compatible)
+- **`MCP2CLI_AUTH_TOKEN` env var only:** Legacy single-token mode, treated as admin
+- **tokens.json exists:** Full multi-user RBAC
+
+## Per-Identity Credential Management
+
+Different users and agents can have their own API keys for backend services. When rico calls open-brain, he uses his key. When skippy calls it, the agents' shared key is used.
+
+### credentials.json
+
+Create `~/.config/mcp2cli/credentials.json`:
+
+```json
+{
+  "groups": {
+    "ai_agents": ["skippy", "bilby", "nagatha", "claude"]
+  },
+  "credentials": {
+    "rico": {
+      "open-brain": { "headers": { "Authorization": "Bearer ricos-ob-key" } }
+    },
+    "ai_agents": {
+      "open-brain": { "headers": { "Authorization": "Bearer agents-shared-ob-key" } },
+      "n8n": { "env": { "N8N_API_KEY": "agents-n8n-key" } }
+    }
+  },
+  "defaults": {
+    "proxmox": { "headers": { "Authorization": "PVEAPIToken=shared-token" } }
+  }
+}
+```
+
+### Resolution Chain
+
+When a tool call comes in, credentials are resolved in priority order:
+
+1. **User-specific** -- `credentials[userId][service]`
+2. **Group** -- first matching group the user belongs to
+3. **Defaults** -- `defaults[service]`
+4. **services.json** -- whatever's baked into the service config (backward compatible)
+
+For http/websocket services, credential headers are merged into the connection. For stdio services, credential env vars are merged into the process environment.
+
+### Credential CLI
+
+```bash
+# Set credentials for an identity on a service
+mcp2cli credentials set rico open-brain --header "Authorization: Bearer my-key"
+
+# Set env-based credentials (for stdio services)
+mcp2cli credentials set rico n8n --env "N8N_API_KEY=my-n8n-key"
+
+# Set a default credential (used when no user/group match)
+mcp2cli credentials set-default proxmox --header "Authorization: PVEAPIToken=shared"
+
+# List all credentials (values are redacted)
+mcp2cli credentials list
+
+# Show effective credential source for a user
+mcp2cli credentials resolve skippy open-brain
+# → {"exists": true, "source": "group"}
+
+# Group management
+mcp2cli credentials group add ai_agents skippy bilby nagatha
+mcp2cli credentials group add-members ai_agents claude
+mcp2cli credentials group remove-members ai_agents bilby
+mcp2cli credentials group list
+
+# Remove credentials
+mcp2cli credentials remove rico open-brain
+mcp2cli credentials remove-default proxmox
+mcp2cli credentials group remove ai_agents
+
+# Reload from disk after manual edits
+mcp2cli credentials reload
+```
+
+### Open Brain Example
+
+Open Brain (OBv2) is an HTTP MCP service. With credential management, each user gets their own API key:
+
+**services.json** -- base config (no credentials, just the endpoint):
+```json
+{
+  "services": {
+    "open-brain": {
+      "backend": "http",
+      "url": "http://10.71.20.49:3100/mcp"
+    }
+  }
+}
+```
+
+**credentials.json** -- per-identity keys:
+```json
+{
+  "groups": {
+    "ai_agents": ["skippy", "bilby", "claude"]
+  },
+  "credentials": {
+    "rico": {
+      "open-brain": { "headers": { "Authorization": "Bearer ricos-ob-api-key" } }
+    },
+    "ai_agents": {
+      "open-brain": { "headers": { "Authorization": "Bearer agents-shared-ob-key" } }
+    }
+  }
+}
+```
+
+Now when rico calls `mcp2cli open-brain search_all --params '{"query": "kubernetes"}'`, his personal key is injected. When skippy calls the same tool, the agents' shared key is used. Each gets their own connection in the pool.
+
+### Security
+
+- **Redacted list output** -- `GET /api/credentials` returns `Bear***` not full values
+- **IDOR protection** -- agents can only resolve their own credentials, admin required for others
+- **File permissions** -- `credentials.json` is written with `0600` (owner read/write only)
+- **Input validation** -- header values reject CRLF injection, dangerous headers (Host, Transfer-Encoding) and env vars (PATH, LD_PRELOAD, NODE_OPTIONS) are blocked
+- **Atomic writes** -- temp file + rename prevents partial writes on crash
+- **Pool invalidation** -- changing credentials evicts stale connections automatically
+
+## Advanced Features
 
 ### Schema Caching
 
@@ -418,13 +589,13 @@ mcp2cli generate-skills n8n
 
 Manual edits inside `MANUAL:START` / `MANUAL:END` markers are preserved across regeneration. When schema drift is detected (via the caching layer), skill regeneration can be triggered automatically.
 
-## v1.3 Environment Variables
-
-In addition to the variables listed above, v1.3 adds:
+## Additional Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MCP2CLI_CACHE_DIR` | `~/.cache/mcp2cli` | Base directory for schema cache and circuit breaker state |
+| `MCP2CLI_TOKENS_FILE` | `~/.config/mcp2cli/tokens.json` | Path to multi-user token config |
+| `MCP2CLI_CREDENTIALS_FILE` | `~/.config/mcp2cli/credentials.json` | Path to per-identity credential mappings |
 
 ## Network Deployment
 
@@ -462,10 +633,17 @@ In addition to the [base environment variables](#environment-variables), network
 | `MCP2CLI_AUTH_TOKEN` | (unset) | Bearer token for TCP authentication. Required for production deployments |
 | `MCP2CLI_REMOTE_URL` | (unset) | URL of remote mcp2cli daemon (e.g. `http://mcp-server:9500`). Enables remote client mode |
 | `MCP2CLI_CONFIG` | `~/.config/mcp2cli/services.json` | Path to service definitions (useful for server-side config in `/etc/mcp2cli/`) |
+| `MCP2CLI_TOKENS_FILE` | `~/.config/mcp2cli/tokens.json` | Path to multi-user token/RBAC config |
+| `MCP2CLI_CREDENTIALS_FILE` | `~/.config/mcp2cli/credentials.json` | Path to per-identity credential mappings |
 
 ### Authentication
 
-When `MCP2CLI_AUTH_TOKEN` is set on the server, all requests must include a `Bearer` token in the `Authorization` header. The token comparison uses timing-safe equality to prevent timing attacks.
+The daemon supports two auth modes (see [Multi-User Authentication](#multi-user-authentication) above):
+
+1. **Multi-user RBAC** via `tokens.json` -- each user/agent gets their own token and role
+2. **Legacy single-token** via `MCP2CLI_AUTH_TOKEN` env var -- treated as admin
+
+All token comparisons use timing-safe equality to prevent timing attacks.
 
 **Auth-exempt paths** -- these skip authentication so load balancers and monitoring can probe without credentials:
 - `GET /health` -- health check with uptime, memory, and pool status
