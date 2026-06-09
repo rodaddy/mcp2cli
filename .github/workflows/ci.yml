@@ -11,7 +11,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, rodaddy]
     steps:
       - uses: actions/checkout@v4
 
@@ -40,11 +40,11 @@ jobs:
 
   deploy:
     needs: check
-    runs-on: self-hosted
+    runs-on: [self-hosted, rodaddy]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     env:
       DEPLOY_HOST: 10.71.20.63
-      DEPLOY_USER: root
+      DEPLOY_USER: rico
       SERVICE_NAME: mcp2cli
       BINARY_PATH: /usr/local/bin/mcp2cli
       HEALTH_URL: http://10.71.20.63:9500/health
@@ -64,20 +64,20 @@ jobs:
       - name: Backup current binary
         run: |
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "cp ${{ env.BINARY_PATH }} ${{ env.BINARY_PATH }}.bak 2>/dev/null || true"
+            "sudo cp ${{ env.BINARY_PATH }} ${{ env.BINARY_PATH }}.bak 2>/dev/null || true"
 
       - name: Deploy new binary
         run: |
           scp dist/mcp2cli ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/mcp2cli-new
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "mv /tmp/mcp2cli-new ${{ env.BINARY_PATH }} && \
-             chmod +x ${{ env.BINARY_PATH }} && \
-             chown mcp2cli:mcp2cli ${{ env.BINARY_PATH }}"
+            "sudo mv /tmp/mcp2cli-new ${{ env.BINARY_PATH }} && \
+             sudo chmod +x ${{ env.BINARY_PATH }} && \
+             sudo chown mcp2cli:mcp2cli ${{ env.BINARY_PATH }}"
 
       - name: Restart service
         run: |
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "systemctl restart ${{ env.SERVICE_NAME }}"
+            "sudo systemctl restart ${{ env.SERVICE_NAME }}"
 
       - name: Health check (with retry)
         run: |
@@ -98,8 +98,8 @@ jobs:
           echo "Deployment failed -- rolling back to previous binary"
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
             "if [ -f ${{ env.BINARY_PATH }}.bak ]; then \
-               mv ${{ env.BINARY_PATH }}.bak ${{ env.BINARY_PATH }} && \
-               systemctl restart ${{ env.SERVICE_NAME }} && \
+               sudo mv ${{ env.BINARY_PATH }}.bak ${{ env.BINARY_PATH }} && \
+               sudo systemctl restart ${{ env.SERVICE_NAME }} && \
                echo 'Rollback complete'; \
              else \
                echo 'No backup found -- manual intervention required'; \
@@ -121,5 +121,4 @@ jobs:
         if: success()
         run: |
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "rm -f ${{ env.BINARY_PATH }}.bak"
-
+            "sudo rm -f ${{ env.BINARY_PATH }}.bak"
