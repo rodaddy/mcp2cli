@@ -105,6 +105,13 @@ describe("skills get", () => {
     expect(stdout).toContain("Usage:");
     expect(exitCode).not.toBe(0);
   });
+
+  // H1: Path traversal validation
+  test("rejects path traversal in service name", async () => {
+    const { stdout, exitCode } = await captureSkills(["get", "../../../etc/passwd"]);
+    expect(stdout).toContain("path traversal");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 describe("skills install", () => {
@@ -141,12 +148,30 @@ describe("skills install", () => {
     const installed = Bun.file(join(targetDir, "SKILL.md"));
     expect(await installed.exists()).toBe(true);
   });
+
+  // H1: Path traversal validation
+  test("rejects path traversal in service name", async () => {
+    const { stdout, exitCode } = await captureSkills(["install", "../etc/passwd", "--target", "/tmp/x"]);
+    expect(stdout).toContain("path traversal");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // M7: Warns on overwrite
+  test("warns when overwriting existing skill bundle", async () => {
+    await writeSkillFile("test-svc", "# original\n");
+    const targetDir = join(testDir, "overwrite-target");
+    await mkdir(targetDir, { recursive: true });
+    await Bun.write(join(targetDir, "SKILL.md"), "# old content\n");
+
+    const { stdout } = await captureSkills(["install", "test-svc", "--target", targetDir]);
+    expect(stdout).toContain("Overwriting existing skill bundle");
+    expect(stdout).toContain("Installed test-svc");
+  });
 });
 
 describe("skills list", () => {
   test("shows missing when no skill file exists", async () => {
     await writeCache("test-svc", [makeTool("tool_a", "Does A")]);
-    // Set up a minimal config for the list command to find
     const origConfig = process.env.MCP2CLI_CONFIG;
     const configPath = join(testDir, "services.json");
     await Bun.write(configPath, JSON.stringify({
@@ -165,5 +190,135 @@ describe("skills list", () => {
         delete process.env.MCP2CLI_CONFIG;
       }
     }
+  });
+
+  // L11: Test stale detection via schema_hash
+  test("detects stale skill when schema_hash differs from cache", async () => {
+    const tools = [makeTool("tool_a", "Does A"), makeTool("tool_b", "Does B")];
+    await writeCache("test-svc", tools);
+
+    // Write a SKILL.md with a hash that won't match the cache
+    const skillContent = [
+      "---",
+      "name: test-svc",
+      "tool_count: 2",
+      "generated_at: 2025-01-01T00:00:00.000Z",
+      "schema_hash: 0000000000000000",
+      "triggers:",
+      "  - test-svc",
+      "---",
+      "",
+      "# test-svc",
+    ].join("\n");
+    await writeSkillFile("test-svc", skillContent);
+
+    const origConfig = process.env.MCP2CLI_CONFIG;
+    const configPath = join(testDir, "services.json");
+    await Bun.write(configPath, JSON.stringify({
+      services: { "test-svc": { backend: "stdio", command: "echo", args: [] } },
+    }));
+    process.env.MCP2CLI_CONFIG = configPath;
+
+    try {
+      const { stdout } = await captureSkills(["list"]);
+      expect(stdout).toContain("test-svc");
+      expect(stdout).toContain("stale");
+    } finally {
+      if (origConfig !== undefined) {
+        process.env.MCP2CLI_CONFIG = origConfig;
+      } else {
+        delete process.env.MCP2CLI_CONFIG;
+      }
+    }
+  });
+
+  // L11: Test ok detection via matching schema_hash
+  test("shows ok when schema_hash matches cache", async () => {
+    const tools = [makeTool("tool_a", "Does A")];
+    await writeCache("test-svc", tools);
+
+    // Compute the expected hash
+    const { computeSchemaHash } = await import("../../src/generation/skill-hash.ts");
+    const expectedHash = await computeSchemaHash(tools);
+
+    const skillContent = [
+      "---",
+      "name: test-svc",
+      "tool_count: 1",
+      "generated_at: 2025-01-01T00:00:00.000Z",
+      `schema_hash: ${expectedHash}`,
+      "triggers:",
+      "  - test-svc",
+      "---",
+      "",
+      "# test-svc",
+    ].join("\n");
+    await writeSkillFile("test-svc", skillContent);
+
+    const origConfig = process.env.MCP2CLI_CONFIG;
+    const configPath = join(testDir, "services.json");
+    await Bun.write(configPath, JSON.stringify({
+      services: { "test-svc": { backend: "stdio", command: "echo", args: [] } },
+    }));
+    process.env.MCP2CLI_CONFIG = configPath;
+
+    try {
+      const { stdout } = await captureSkills(["list"]);
+      expect(stdout).toContain("test-svc");
+      expect(stdout).toContain("ok");
+      expect(stdout).not.toContain("stale");
+    } finally {
+      if (origConfig !== undefined) {
+        process.env.MCP2CLI_CONFIG = origConfig;
+      } else {
+        delete process.env.MCP2CLI_CONFIG;
+      }
+    }
+  });
+
+  // L11: Test --json output
+  test("outputs JSON when --json flag is passed via args", async () => {
+    const origConfig = process.env.MCP2CLI_CONFIG;
+    const configPath = join(testDir, "services.json");
+    await Bun.write(configPath, JSON.stringify({
+      services: { "test-svc": { backend: "stdio", command: "echo", args: [] } },
+    }));
+    process.env.MCP2CLI_CONFIG = configPath;
+
+    try {
+      const { stdout } = await captureSkills(["list", "--json"]);
+      const parsed = JSON.parse(stdout);
+      expect(parsed.services).toBeArray();
+      expect(parsed.total).toBeNumber();
+    } finally {
+      if (origConfig !== undefined) {
+        process.env.MCP2CLI_CONFIG = origConfig;
+      } else {
+        delete process.env.MCP2CLI_CONFIG;
+      }
+    }
+  });
+});
+
+// L10: Test diff/generate argument forwarding
+describe("skills diff", () => {
+  test("errors when no service specified", async () => {
+    const { stdout, exitCode } = await captureSkills(["diff"]);
+    expect(stdout).toContain("Usage:");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+describe("skills generate", () => {
+  test("errors when no service specified", async () => {
+    const { stdout, exitCode } = await captureSkills(["generate"]);
+    expect(stdout).toContain("Usage:");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("errors when only flags passed (no service name)", async () => {
+    const { stdout, exitCode } = await captureSkills(["generate", "--dry-run"]);
+    expect(stdout).toContain("Usage:");
+    expect(exitCode).not.toBe(0);
   });
 });

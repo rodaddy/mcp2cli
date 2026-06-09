@@ -1,21 +1,42 @@
 /**
- * Handle `mcp2cli skills <subcommand>` — manage service skill bundles.
+ * Handle `mcp2cli skills <subcommand>` -- manage service skill bundles.
  * Wraps the generation engine with user-friendly list/get/install/diff/generate subcommands.
  */
 import { loadConfig } from "../../config/index.ts";
 import { listCachedServices, readCacheRaw } from "../../cache/index.ts";
 import { resolveOutputDir } from "../../generation/file-manager.ts";
+import { computeSchemaHash } from "../../generation/skill-hash.ts";
+import { validateIdentifier } from "../../validation/pipelines.ts";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { CommandHandler } from "../../types/index.ts";
 import { join } from "node:path";
-import { readdir, cp, mkdir } from "node:fs/promises";
+import { cp, mkdir } from "node:fs/promises";
+
+/** Lazy getter for generate-skills module (L12 -- deduplicate dynamic import) */
+const getGenerateSkills = () => import("./generate-skills.ts");
+
+/**
+ * Resolve skill directory and check existence, with input validation (L13).
+ * Throws on invalid service name (path traversal, control chars, etc.).
+ */
+async function resolveSkillDir(
+  serviceName: string,
+): Promise<{ skillDir: string; exists: boolean }> {
+  const check = validateIdentifier(serviceName, "service");
+  if (!check.valid) {
+    throw new Error(check.message);
+  }
+  const skillDir = resolveOutputDir(serviceName);
+  const exists = await Bun.file(join(skillDir, "SKILL.md")).exists();
+  return { skillDir, exists };
+}
 
 export const handleSkills: CommandHandler = async (args: string[]) => {
   const subcommand = args[0];
 
   switch (subcommand) {
     case "list":
-      await handleSkillsList();
+      await handleSkillsList(args.slice(1));
       break;
     case "get":
       await handleSkillsGet(args.slice(1));
@@ -60,15 +81,17 @@ interface SkillStatus {
   toolCount?: number;
   cachedToolCount?: number;
   generatedAt?: string;
+  schemaHash?: string;
   path?: string;
 }
 
-async function handleSkillsList(): Promise<void> {
+async function handleSkillsList(args: string[]): Promise<void> {
   const config = await loadConfig();
   const serviceNames = Object.keys(config.services).sort();
   const cachedServices = await listCachedServices();
 
-  const jsonMode = process.argv.includes("--json");
+  // M6: Use args parameter instead of process.argv
+  const jsonMode = args.includes("--json");
   const statuses: SkillStatus[] = [];
 
   for (const name of serviceNames) {
@@ -88,17 +111,30 @@ async function handleSkillsList(): Promise<void> {
     }
 
     const content = await file.text();
-    const toolCountMatch = content.match(/\| .+ \| .+ \|/g);
-    const generatedToolCount = toolCountMatch ? toolCountMatch.length - 1 : 0; // subtract header row
+
+    // M4/M5: Use schema_hash from YAML frontmatter instead of brittle regex tool count
+    const hashMatch = content.match(/^schema_hash:\s*(\S+)/m);
+    const existingHash = hashMatch?.[1];
 
     const cached = cachedServices.includes(name) ? await readCacheRaw(name) : null;
-    const isStale = cached && cached.tools.length !== generatedToolCount;
+    let isStale = false;
+    let toolCount: number | undefined;
+
+    if (cached) {
+      const cacheHash = await computeSchemaHash(cached.tools);
+      isStale = existingHash !== cacheHash;
+    }
+
+    // Extract tool_count from frontmatter as display value
+    const toolCountMatch = content.match(/^tool_count:\s*(\d+)/m);
+    toolCount = toolCountMatch ? parseInt(toolCountMatch[1]!, 10) : undefined;
 
     statuses.push({
       service: name,
       status: isStale ? "stale" : "generated",
-      toolCount: generatedToolCount,
+      toolCount,
       cachedToolCount: cached?.tools.length,
+      schemaHash: existingHash,
       path: skillDir,
     });
   }
@@ -138,11 +174,24 @@ async function handleSkillsGet(args: string[]): Promise<void> {
     return;
   }
 
-  const skillDir = resolveOutputDir(serviceName);
-  const skillPath = join(skillDir, "SKILL.md");
-  const file = Bun.file(skillPath);
+  // H1: Validate service name to prevent path traversal
+  const check = validateIdentifier(serviceName, "service");
+  if (!check.valid) {
+    console.error(check.message);
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
 
-  if (!(await file.exists())) {
+  let resolved: { skillDir: string; exists: boolean };
+  try {
+    resolved = await resolveSkillDir(serviceName);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+
+  if (!resolved.exists) {
     console.error(
       `No skill file found for "${serviceName}". Run 'mcp2cli skills generate ${serviceName}' first.`,
     );
@@ -150,7 +199,7 @@ async function handleSkillsGet(args: string[]): Promise<void> {
     return;
   }
 
-  const content = await file.text();
+  const content = await Bun.file(join(resolved.skillDir, "SKILL.md")).text();
   console.log(content);
   process.exitCode = EXIT_CODES.SUCCESS;
 }
@@ -169,11 +218,24 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
     return;
   }
 
-  const skillDir = resolveOutputDir(serviceName);
-  const skillPath = join(skillDir, "SKILL.md");
-  const file = Bun.file(skillPath);
+  // H1: Validate service name to prevent path traversal
+  const check = validateIdentifier(serviceName, "service");
+  if (!check.valid) {
+    console.error(check.message);
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
 
-  if (!(await file.exists())) {
+  let resolved: { skillDir: string; exists: boolean };
+  try {
+    resolved = await resolveSkillDir(serviceName);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+
+  if (!resolved.exists) {
     console.error(
       `No skill file found for "${serviceName}". Run 'mcp2cli skills generate ${serviceName}' first.`,
     );
@@ -181,32 +243,45 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
     return;
   }
 
-  await mkdir(target, { recursive: true });
-
-  // Copy SKILL.md
+  // H2: Resolve tilde BEFORE mkdir so the actual path is used for both operations
   const resolvedTarget = target.startsWith("~")
     ? join(process.env.HOME ?? "", target.slice(1))
     : target;
 
-  await cp(skillDir, resolvedTarget, { recursive: true });
+  // M7: Warn if overwriting existing skill bundle
+  const existingSkill = Bun.file(join(resolvedTarget, "SKILL.md"));
+  if (await existingSkill.exists()) {
+    console.error(`Overwriting existing skill bundle at ${resolvedTarget}`);
+  }
 
-  // Count files copied
-  let fileCount = 1; // SKILL.md
-  try {
-    const refs = await readdir(join(skillDir, "references"));
-    fileCount += refs.length;
-  } catch { /* no references dir */ }
+  await mkdir(resolvedTarget, { recursive: true });
 
-  console.log(`Installed ${serviceName} skill bundle to ${resolvedTarget} (${fileCount} files)`);
+  // L16: Dereference symlinks when copying
+  await cp(resolved.skillDir, resolvedTarget, { recursive: true, dereference: true });
+
+  // L15: Simplified install message without inaccurate file count
+  console.log(`Installed ${serviceName} skill bundle to ${resolvedTarget}`);
   process.exitCode = EXIT_CODES.SUCCESS;
 }
 
+// M9: Validate service name before delegating to generate-skills
 async function handleSkillsDiff(args: string[]): Promise<void> {
-  const { handleGenerateSkills } = await import("./generate-skills.ts");
-  await handleGenerateSkills([args[0] ?? "", "--diff"]);
+  if (!args[0]) {
+    console.error("Usage: mcp2cli skills diff <service>");
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+  const { handleGenerateSkills } = await getGenerateSkills();
+  await handleGenerateSkills([args[0], "--diff"]);
 }
 
+// M9: Validate service name before delegating to generate-skills
 async function handleSkillsGenerate(args: string[]): Promise<void> {
-  const { handleGenerateSkills } = await import("./generate-skills.ts");
+  if (!args[0] || args[0].startsWith("--")) {
+    console.error("Usage: mcp2cli skills generate <service> [options]");
+    process.exitCode = EXIT_CODES.VALIDATION;
+    return;
+  }
+  const { handleGenerateSkills } = await getGenerateSkills();
   await handleGenerateSkills(args);
 }

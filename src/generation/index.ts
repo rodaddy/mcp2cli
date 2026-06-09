@@ -48,3 +48,6 @@ export type { ToolChange, SkillDiffResult } from "./diff.ts";
 // Auto-regeneration
 export { autoRegenerateSkills } from "./auto-regen.ts";
 export type { AutoRegenResult } from "./auto-regen.ts";
+
+// Schema hashing
+export { computeSchemaHash, computeFullSchemaHash } from "./skill-hash.ts";

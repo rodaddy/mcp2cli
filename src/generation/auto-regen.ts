@@ -11,6 +11,7 @@ import { generateSkillMd, generateReferenceMd, estimateTokens } from "./template
 import { detectPrefixGroups } from "./grouping.ts";
 import { resolveOutputDir, planFileWrites, executeFileWrites } from "./file-manager.ts";
 import { extractManualSections, injectManualSections } from "./preserve.ts";
+import { computeSchemaHash } from "./skill-hash.ts";
 import { createLogger } from "../logger/index.ts";
 import { join } from "node:path";
 
@@ -62,16 +63,32 @@ export async function autoRegenerateSkills(
       return result;
     }
 
-    // Build skill template input
+    // Build skill template input with metadata (L17)
+    const schemaHash = await computeSchemaHash(filteredTools);
+
+    // Reuse existing timestamp if hash hasn't changed
+    const resolvedDir = outputDir ?? resolveOutputDir(serviceName);
+    const existingSkillPath2 = join(resolvedDir, "SKILL.md");
+    const existingFile2 = Bun.file(existingSkillPath2);
+    let generatedAt = new Date().toISOString();
+    if (await existingFile2.exists()) {
+      const existingText = await existingFile2.text();
+      const existingHashMatch = existingText.match(/^schema_hash:\s*(\S+)/m);
+      if (existingHashMatch?.[1] === schemaHash) {
+        const existingAtMatch = existingText.match(/^generated_at:\s*(\S+)/m);
+        generatedAt = existingAtMatch?.[1] ?? generatedAt;
+      }
+    }
+
     const input: SkillTemplateInput = {
       serviceName,
       description: `MCP tools for ${serviceName}`,
       tools: filteredTools,
       triggerKeywords: [serviceName],
+      generatedAt,
+      schemaHash,
+      toolCount: filteredTools.length,
     };
-
-    // Resolve output directory
-    const resolvedDir = outputDir ?? resolveOutputDir(serviceName);
 
     // Generate new SKILL.md
     let skillMd = generateSkillMd(input);

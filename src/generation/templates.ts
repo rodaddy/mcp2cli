@@ -62,7 +62,7 @@ export function generateSkillMd(input: SkillTemplateInput): string {
   lines.push("| Tool | Description |");
   lines.push("|------|-------------|");
   for (const tool of input.tools) {
-    lines.push(`| ${tool.name} | ${tool.description} |`);
+    lines.push(`| ${tool.name} | ${tool.description.replace(/\|/g, "\\|")} |`);
   }
   lines.push("");
 
@@ -122,7 +122,7 @@ export function generateReferenceMd(
     // Tool section
     lines.push(`## ${tool.tool}`);
     lines.push("");
-    lines.push(tool.description);
+    lines.push(tool.description.replace(/\|/g, "\\|"));
     lines.push("");
 
     // Parameter table
@@ -141,7 +141,7 @@ export function generateReferenceMd(
         const prop = properties[paramName]!;
         const isRequired = required.includes(paramName) ? "Yes" : "No";
         const paramType = prop.type ?? "string";
-        const desc = prop.description ?? "";
+        const desc = (prop.description ?? "").replace(/\|/g, "\\|");
         lines.push(`| ${paramName} | ${paramType} | ${isRequired} | ${desc} |`);
       }
 
