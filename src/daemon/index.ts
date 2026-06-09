@@ -15,6 +15,7 @@ import { createLogger } from "../logger/index.ts";
 import { MetricsCollector } from "./metrics.ts";
 import { ConfigManager } from "./config-manager.ts";
 import { TokenAuthProvider } from "./auth-provider.ts";
+import { CredentialManager } from "../credentials/index.ts";
 
 const log = createLogger("daemon");
 
@@ -68,12 +69,16 @@ export async function startDaemon(): Promise<void> {
     });
   }
 
+  // Load credential manager (per-identity credential mapping)
+  const credentialManager = await CredentialManager.load();
+
   // Create connection pool and metrics collector
   const pool = new ConnectionPool();
   const metrics = new MetricsCollector();
 
-  // Wire pool into config manager for connection lifecycle
+  // Wire pool into config manager and credential manager for connection lifecycle
   configManager.setPool(pool);
+  credentialManager.setPool(pool);
 
   // Parse idle timeout from env (seconds -> ms)
   // TCP mode: default to 0 (disabled) since it's a long-running network service
@@ -128,6 +133,7 @@ export async function startDaemon(): Promise<void> {
     pool,
     config,
     configManager,
+    credentialManager,
     idleTimer,
     onShutdown: () => {
       void gracefulShutdown();

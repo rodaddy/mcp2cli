@@ -28,6 +28,9 @@ import { TokenAuthProvider } from "./auth-provider.ts";
 import type { AuthProvider, AuthContext } from "./auth-provider.ts";
 import type { MetricsCollector } from "./metrics.ts";
 import { ConfigManager, ConfigManagerError } from "./config-manager.ts";
+import type { CredentialManager } from "../credentials/index.ts";
+import { mergeCredentials, userPoolKey } from "./credential-merge.ts";
+import { handleCredentialRoutes } from "./routes/credentials.ts";
 import { renderUI } from "./ui.ts";
 import pkg from "../../package.json" with { type: "json" };
 
@@ -39,6 +42,7 @@ interface DaemonServerOptions {
   pool: ConnectionPool;
   config: ServicesConfig;
   configManager?: ConfigManager;
+  credentialManager?: CredentialManager;
   idleTimer: IdleTimer;
   onShutdown: () => void;
   authProvider: AuthProvider;
@@ -63,10 +67,31 @@ function errorResponse(
  * Returns the Bun.serve() server instance.
  */
 export function createDaemonServer(opts: DaemonServerOptions) {
-  const { listenConfig, pool, config, configManager, idleTimer, onShutdown, authProvider, metrics } = opts;
+  const { listenConfig, pool, config, configManager, credentialManager, idleTimer, onShutdown, authProvider, metrics } = opts;
 
   // Use configManager's live config for pool lookups when available
   const getConfig = (): ServicesConfig => configManager ? configManager.getServices() : config;
+
+  /** Resolve per-user credential pool key and optional service config override. */
+  function resolveCredentialPool(
+    service: string,
+    cm: CredentialManager | undefined,
+    authContext: AuthContext | null,
+    currentConfig: ServicesConfig,
+  ): { poolKey: string; serviceConfigOverride?: import("../config/index.ts").ServiceConfig } {
+    if (!cm || !authContext) return { poolKey: service };
+    const resolved = cm.resolveWithSource(authContext.userId, service);
+    if (!resolved) return { poolKey: service };
+    const baseCfg = currentConfig.services[service];
+    if (!baseCfg) return { poolKey: service };
+    const poolKey = resolved.source === "default"
+      ? service
+      : userPoolKey(service, `${resolved.source}:${resolved.identity}`);
+    return {
+      poolKey,
+      serviceConfigOverride: mergeCredentials(baseCfg, resolved.credential),
+    };
+  }
 
   // Build listen options based on mode
   const listenOpts = listenConfig.mode === "unix"
@@ -122,11 +147,14 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             params: sanitizeParams(body.params ?? {}),
           });
 
-          const conn = await pool.getConnection(body.service, getConfig());
+          // Resolve per-user credentials and determine pool key
+          const { poolKey, serviceConfigOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
+
+          const conn = await pool.getConnection(poolKey, getConfig(), serviceConfigOverride, body.service);
 
           // MEM-02: AbortSignal timeout on tool calls
           // Priority: per-service config > MCP2CLI_TOOL_TIMEOUT env > 30s default
-          const serviceConfig = getConfig().services[body.service];
+          const serviceConfig = serviceConfigOverride ?? getConfig().services[body.service];
           const perServiceTimeout = serviceConfig && "timeout" in serviceConfig ? serviceConfig.timeout : undefined;
           const timeout = perServiceTimeout ?? parseInt(process.env.MCP2CLI_TOOL_TIMEOUT ?? "30000", 10);
           const controller = new AbortController();
@@ -139,7 +167,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           let resolvedTool = body.tool;
           try {
-            const { resolvedName } = await resolveToolNameCached(conn.client, body.tool, body.service);
+            const { resolvedName } = await resolveToolNameCached(conn.client, body.tool, poolKey);
             resolvedTool = resolvedName;
           } catch { /* cache/listTools unavailable, use original name */ }
           callResolvedTool = resolvedTool !== body.tool ? resolvedTool : undefined;
@@ -253,8 +281,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         idleTimer.onRequestStart();
         try {
           const body = (await req.json()) as DaemonListToolsRequest;
-          const conn = await pool.getConnection(body.service, getConfig());
-          const tools = await listToolsCached(conn.client, body.service);
+          const { poolKey: listPoolKey, serviceConfigOverride: listServiceOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
+          const conn = await pool.getConnection(listPoolKey, getConfig(), listServiceOverride, body.service);
+          const tools = await listToolsCached(conn.client, listPoolKey);
           return Response.json({ success: true, result: tools });
         } catch (err) {
           return handleEndpointError(err, pool);
@@ -268,11 +297,12 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         idleTimer.onRequestStart();
         try {
           const body = (await req.json()) as DaemonSchemaRequest;
-          const conn = await pool.getConnection(body.service, getConfig());
+          const { poolKey: schemaPoolKey, serviceConfigOverride: schemaServiceOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
+          const conn = await pool.getConnection(schemaPoolKey, getConfig(), schemaServiceOverride, body.service);
           const result = await getToolSchemaCached(
             conn.client,
             body.tool,
-            body.service,
+            schemaPoolKey,
           );
           if (result === null) {
             return errorResponse(
@@ -295,7 +325,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         const mem = process.memoryUsage();
         const currentConfig = getConfig();
         const configuredServices = Object.keys(currentConfig.services);
-        const connectedServices = pool.serviceNames;
+        const connectedServices = pool.baseServiceNames;
         return Response.json({
           status: "ok",
           version: pkg.version,
@@ -313,7 +343,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
       // GET /metrics -- Prometheus metrics (auth-exempt)
       if (path === "/metrics" && req.method === "GET") {
-        const body = metrics.render(pool.size, pool.serviceNames);
+        const body = metrics.render(pool.size, pool.baseServiceNames);
         return new Response(body, {
           headers: { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" },
         });
@@ -376,7 +406,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const services = Object.entries(cfg.services).map(([name, svc]) => ({
             name,
             backend: svc.backend,
-            connected: pool.serviceNames.includes(name),
+            connected: pool.baseServiceNames.includes(name),
             ...(svc.backend !== "stdio" && "url" in svc ? { url: svc.url } : {}),
           }));
           return Response.json({ success: true, services });
@@ -442,7 +472,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             if (!svc) {
               return errorResponse("UNKNOWN_COMMAND", `Service not found: ${name}`, undefined, 404);
             }
-            const connected = pool.serviceNames.includes(name);
+            const connected = pool.baseServiceNames.includes(name);
             let toolCount = 0;
             if (connected) {
               try {
@@ -506,6 +536,12 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             return errorResponse("INTERNAL_ERROR", err instanceof Error ? err.message : String(err));
           }
         }
+      }
+
+      // --- Credential management API routes (require credentialManager) ---
+      if (credentialManager) {
+        const credResponse = await handleCredentialRoutes(req, url, path, credentialManager, authCtx);
+        if (credResponse) return credResponse;
       }
 
       // Default: 404

@@ -92,6 +92,18 @@ const PATH_PERMISSIONS: Array<{ pattern: RegExp; method: string; permission: str
   { pattern: /^\/api\/services\/[^/]+$/, method: "PUT", permission: "update" },
   { pattern: /^\/api\/services\/[^/]+$/, method: "DELETE", permission: "remove" },
   { pattern: /^\/api\/services\/[^/]+\/status$/, method: "GET", permission: "status" },
+  // Credential management API
+  { pattern: /^\/api\/credentials$/, method: "GET", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials\/resolve$/, method: "GET", permission: "credentials-read" },
+  { pattern: /^\/api\/credentials\/groups$/, method: "GET", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials$/, method: "POST", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials$/, method: "DELETE", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials\/defaults$/, method: "POST", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials\/defaults$/, method: "DELETE", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials\/groups$/, method: "POST", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials\/groups\/[^/]+$/, method: "PUT", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials\/groups\/[^/]+$/, method: "DELETE", permission: "credentials-write" },
+  { pattern: /^\/api\/credentials\/reload$/, method: "POST", permission: "credentials-write" },
 ];
 
 /**

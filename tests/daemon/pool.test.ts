@@ -17,6 +17,11 @@ const mockConnectToService = mock(async () => {
 // Apply the mock to the connection module
 mock.module("../../src/connection/index.ts", () => ({
   connectToService: mockConnectToService,
+  connectToHttpService: mockConnectToService,
+}));
+
+mock.module("../../src/connection/websocket-transport.ts", () => ({
+  connectToWebSocketService: mockConnectToService,
 }));
 
 // Import pool AFTER mocking
@@ -53,6 +58,12 @@ const testConfig: ServicesConfig = {
       backend: "stdio" as const,
       command: "echo",
       args: ["other"],
+      env: {},
+    },
+    "svc::with-delimiter": {
+      backend: "stdio" as const,
+      command: "echo",
+      args: ["delimiter"],
       env: {},
     },
   },
@@ -103,6 +114,33 @@ describe("ConnectionPool", () => {
 
     await pool.getConnection("test-svc", testConfig);
     expect(mockConnectToService).toHaveBeenCalledTimes(2);
+  });
+
+  test("credential scoped pool key can use service names containing delimiter", async () => {
+    await pool.getConnection(
+      "credential:test",
+      testConfig,
+      undefined,
+      "svc::with-delimiter",
+    );
+
+    expect(mockConnectToService).toHaveBeenCalledTimes(1);
+  });
+
+  test("closeServicePattern only closes entries for the matching base service", async () => {
+    const unrelated = await pool.getConnection("svc::with-delimiter", testConfig);
+    const credentialed = await pool.getConnection(
+      "credential:test",
+      testConfig,
+      undefined,
+      "test-svc",
+    );
+
+    await pool.closeServicePattern("test-svc");
+
+    expect(credentialed.close).toHaveBeenCalledTimes(1);
+    expect(unrelated.close).toHaveBeenCalledTimes(0);
+    expect(pool.serviceNames).toContain("svc::with-delimiter");
   });
 
   test("size and serviceNames reflect pool state", async () => {
