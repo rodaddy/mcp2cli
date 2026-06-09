@@ -26,6 +26,9 @@ export async function handleCredentialRoutes(
 ): Promise<Response | null> {
   // GET /api/credentials -- list all credentials (redacted)
   if (path === "/api/credentials" && req.method === "GET") {
+    if (authCtx?.role !== "admin") {
+      return errorResponse("AUTH_ERROR", "Only admins can list credential inventory", undefined, 403);
+    }
     const cfg = credentialManager.getRedactedConfig();
     return Response.json({ success: true, ...cfg });
   }
@@ -41,13 +44,29 @@ export async function handleCredentialRoutes(
       return errorResponse("AUTH_ERROR", "Agents can only resolve their own credentials", undefined, 403);
     }
     const resolved = credentialManager.resolve(userId, service);
-    return Response.json({ success: true, userId, service, credential: resolved });
+    if (resolved) {
+      const cfg = credentialManager.getConfig();
+      const userCreds = cfg.credentials[userId]?.[service];
+      let source: string;
+      if (userCreds) {
+        source = "user";
+      } else if (credentialManager.getGroupsForUser(userId).some(g => cfg.credentials[g]?.[service])) {
+        source = "group";
+      } else {
+        source = "default";
+      }
+      return Response.json({ success: true, userId, service, exists: true, source });
+    }
+    return Response.json({ success: true, userId, service, exists: false, source: null });
   }
 
   // POST /api/credentials -- set credential { identity, service, credential }
   if (path === "/api/credentials" && req.method === "POST") {
     try {
-      const body = await req.json() as { identity: string; service: string; credential: unknown };
+      let body: { identity: string; service: string; credential: unknown };
+      try { body = await req.json() as { identity: string; service: string; credential: unknown }; } catch {
+        return errorResponse("INPUT_VALIDATION_ERROR", "Malformed JSON body", undefined, 400);
+      }
       if (!body.identity || !body.service || !body.credential) {
         return errorResponse("INPUT_VALIDATION_ERROR", "Missing 'identity', 'service', or 'credential' field", undefined, 400);
       }
@@ -86,7 +105,10 @@ export async function handleCredentialRoutes(
   // POST /api/credentials/defaults -- set default credential { service, credential }
   if (path === "/api/credentials/defaults" && req.method === "POST") {
     try {
-      const body = await req.json() as { service: string; credential: unknown };
+      let body: { service: string; credential: unknown };
+      try { body = await req.json() as { service: string; credential: unknown }; } catch {
+        return errorResponse("INPUT_VALIDATION_ERROR", "Malformed JSON body", undefined, 400);
+      }
       if (!body.service || !body.credential) {
         return errorResponse("INPUT_VALIDATION_ERROR", "Missing 'service' or 'credential' field", undefined, 400);
       }
@@ -124,6 +146,9 @@ export async function handleCredentialRoutes(
 
   // GET /api/credentials/groups -- list all groups
   if (path === "/api/credentials/groups" && req.method === "GET") {
+    if (authCtx?.role !== "admin") {
+      return errorResponse("AUTH_ERROR", "Only admins can list credential groups", undefined, 403);
+    }
     const cfg = credentialManager.getRedactedConfig();
     return Response.json({ success: true, groups: cfg.groups });
   }
@@ -131,8 +156,11 @@ export async function handleCredentialRoutes(
   // POST /api/credentials/groups -- create group { name, members }
   if (path === "/api/credentials/groups" && req.method === "POST") {
     try {
-      const body = await req.json() as { name: string; members: string[] };
-      if (!body.name || !Array.isArray(body.members)) {
+      let body: { name: string; members: string[] };
+      try { body = await req.json() as { name: string; members: string[] }; } catch {
+        return errorResponse("INPUT_VALIDATION_ERROR", "Malformed JSON body", undefined, 400);
+      }
+      if (!body.name || !isStringArray(body.members)) {
         return errorResponse("INPUT_VALIDATION_ERROR", "Missing 'name' or 'members' field", undefined, 400);
       }
       await credentialManager.addGroup(body.name, body.members);
@@ -150,8 +178,11 @@ export async function handleCredentialRoutes(
   if (groupPutMatch && req.method === "PUT") {
     try {
       const name = decodeURIComponent(groupPutMatch[1]!);
-      const body = await req.json() as { members: string[] };
-      if (!Array.isArray(body.members)) {
+      let body: { members: string[] };
+      try { body = await req.json() as { members: string[] }; } catch {
+        return errorResponse("INPUT_VALIDATION_ERROR", "Malformed JSON body", undefined, 400);
+      }
+      if (!isStringArray(body.members)) {
         return errorResponse("INPUT_VALIDATION_ERROR", "Missing 'members' field", undefined, 400);
       }
       await credentialManager.addGroupMembers(name, body.members);
@@ -178,7 +209,10 @@ export async function handleCredentialRoutes(
           return errorResponse("INPUT_VALIDATION_ERROR", "Malformed JSON body", undefined, 400);
         }
       }
-      if (body.members && Array.isArray(body.members)) {
+      if (body.members && !isStringArray(body.members)) {
+        return errorResponse("INPUT_VALIDATION_ERROR", "'members' must be an array of strings", undefined, 400);
+      }
+      if (body.members) {
         await credentialManager.removeGroupMembers(name, body.members);
         return Response.json({ success: true, message: `Members removed from group '${name}'` });
       }
@@ -206,4 +240,8 @@ export async function handleCredentialRoutes(
   }
 
   return null;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }

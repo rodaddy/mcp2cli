@@ -72,6 +72,27 @@ export function createDaemonServer(opts: DaemonServerOptions) {
   // Use configManager's live config for pool lookups when available
   const getConfig = (): ServicesConfig => configManager ? configManager.getServices() : config;
 
+  /** Resolve per-user credential pool key and optional service config override. */
+  function resolveCredentialPool(
+    service: string,
+    cm: CredentialManager | undefined,
+    authContext: AuthContext | null,
+    currentConfig: ServicesConfig,
+  ): { poolKey: string; serviceConfigOverride?: import("../config/index.ts").ServiceConfig } {
+    if (!cm || !authContext) return { poolKey: service };
+    const resolved = cm.resolveWithSource(authContext.userId, service);
+    if (!resolved) return { poolKey: service };
+    const baseCfg = currentConfig.services[service];
+    if (!baseCfg) return { poolKey: service };
+    const poolKey = resolved.source === "default"
+      ? service
+      : userPoolKey(service, `${resolved.source}:${resolved.identity}`);
+    return {
+      poolKey,
+      serviceConfigOverride: mergeCredentials(baseCfg, resolved.credential),
+    };
+  }
+
   // Build listen options based on mode
   const listenOpts = listenConfig.mode === "unix"
     ? { unix: listenConfig.socketPath }
@@ -127,20 +148,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           });
 
           // Resolve per-user credentials and determine pool key
-          let poolKey = body.service;
-          let serviceConfigOverride: import("../config/index.ts").ServiceConfig | undefined;
-          if (credentialManager && authCtx) {
-            const cred = credentialManager.resolve(authCtx.userId, body.service);
-            if (cred) {
-              const baseCfg = getConfig().services[body.service];
-              if (baseCfg) {
-                serviceConfigOverride = mergeCredentials(baseCfg, cred);
-                poolKey = userPoolKey(body.service, authCtx.userId);
-              }
-            }
-          }
+          const { poolKey, serviceConfigOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
 
-          const conn = await pool.getConnection(poolKey, getConfig(), serviceConfigOverride);
+          const conn = await pool.getConnection(poolKey, getConfig(), serviceConfigOverride, body.service);
 
           // MEM-02: AbortSignal timeout on tool calls
           // Priority: per-service config > MCP2CLI_TOOL_TIMEOUT env > 30s default
@@ -157,7 +167,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           let resolvedTool = body.tool;
           try {
-            const { resolvedName } = await resolveToolNameCached(conn.client, body.tool, body.service);
+            const { resolvedName } = await resolveToolNameCached(conn.client, body.tool, poolKey);
             resolvedTool = resolvedName;
           } catch { /* cache/listTools unavailable, use original name */ }
           callResolvedTool = resolvedTool !== body.tool ? resolvedTool : undefined;
@@ -271,20 +281,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         idleTimer.onRequestStart();
         try {
           const body = (await req.json()) as DaemonListToolsRequest;
-          let listPoolKey = body.service;
-          let listServiceOverride: import("../config/index.ts").ServiceConfig | undefined;
-          if (credentialManager && authCtx) {
-            const cred = credentialManager.resolve(authCtx.userId, body.service);
-            if (cred) {
-              const baseCfg = getConfig().services[body.service];
-              if (baseCfg) {
-                listServiceOverride = mergeCredentials(baseCfg, cred);
-                listPoolKey = userPoolKey(body.service, authCtx.userId);
-              }
-            }
-          }
-          const conn = await pool.getConnection(listPoolKey, getConfig(), listServiceOverride);
-          const tools = await listToolsCached(conn.client, body.service);
+          const { poolKey: listPoolKey, serviceConfigOverride: listServiceOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
+          const conn = await pool.getConnection(listPoolKey, getConfig(), listServiceOverride, body.service);
+          const tools = await listToolsCached(conn.client, listPoolKey);
           return Response.json({ success: true, result: tools });
         } catch (err) {
           return handleEndpointError(err, pool);
@@ -298,23 +297,12 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         idleTimer.onRequestStart();
         try {
           const body = (await req.json()) as DaemonSchemaRequest;
-          let schemaPoolKey = body.service;
-          let schemaServiceOverride: import("../config/index.ts").ServiceConfig | undefined;
-          if (credentialManager && authCtx) {
-            const cred = credentialManager.resolve(authCtx.userId, body.service);
-            if (cred) {
-              const baseCfg = getConfig().services[body.service];
-              if (baseCfg) {
-                schemaServiceOverride = mergeCredentials(baseCfg, cred);
-                schemaPoolKey = userPoolKey(body.service, authCtx.userId);
-              }
-            }
-          }
-          const conn = await pool.getConnection(schemaPoolKey, getConfig(), schemaServiceOverride);
+          const { poolKey: schemaPoolKey, serviceConfigOverride: schemaServiceOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
+          const conn = await pool.getConnection(schemaPoolKey, getConfig(), schemaServiceOverride, body.service);
           const result = await getToolSchemaCached(
             conn.client,
             body.tool,
-            body.service,
+            schemaPoolKey,
           );
           if (result === null) {
             return errorResponse(

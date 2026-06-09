@@ -20,8 +20,8 @@ export function mergeCredentials(
 ): ServiceConfig {
   const merged = structuredClone(serviceConfig);
 
-  if (credential.headers && "headers" in merged) {
-    merged.headers = { ...merged.headers, ...credential.headers };
+  if (credential.headers && (merged.backend === "http" || merged.backend === "websocket")) {
+    merged.headers = { ...(merged.headers ?? {}), ...credential.headers };
   } else if (credential.headers) {
     log.warn("credential_field_mismatch", {
       field: "headers",
@@ -30,8 +30,8 @@ export function mergeCredentials(
     });
   }
 
-  if (credential.env && "env" in merged) {
-    merged.env = { ...merged.env, ...credential.env };
+  if (credential.env && merged.backend === "stdio") {
+    merged.env = { ...(merged.env ?? {}), ...credential.env };
   } else if (credential.env) {
     log.warn("credential_field_mismatch", {
       field: "env",
@@ -49,5 +49,7 @@ export function mergeCredentials(
  * include the userId to maintain separate transports with different credentials.
  */
 export function userPoolKey(serviceName: string, userId?: string): string {
-  return userId ? `${serviceName}::${userId}` : serviceName;
+  if (!userId) return serviceName;
+  const encoded = Buffer.from(JSON.stringify([serviceName, userId])).toString("base64url");
+  return `credential:${encoded}`;
 }

@@ -26,6 +26,7 @@ const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 5000;
 interface PoolEntry {
   connection: McpConnection;
   connectedAt: number;
+  baseServiceName: string;
 }
 
 interface PoolOptions {
@@ -64,11 +65,13 @@ export class ConnectionPool {
    * @param poolKey - The cache key (service name, or "service::userId" for per-user connections)
    * @param config - Full services config (used to look up service by name)
    * @param serviceConfigOverride - Optional pre-merged service config (skips config lookup when provided)
+   * @param baseServiceName - The configured service name when poolKey is credential scoped
    */
   async getConnection(
     poolKey: string,
     config: ServicesConfig,
     serviceConfigOverride?: import("../config/index.ts").ServiceConfig,
+    baseServiceName: string = poolKey,
   ): Promise<McpConnection> {
     // Check cached connection with health validation
     const cached = this.connections.get(poolKey);
@@ -88,19 +91,28 @@ export class ConnectionPool {
     if (pendingPromise) return pendingPromise;
 
     // MEM-04: Enforce pool size limit for genuinely new connections
-    if (this.connections.size >= this._maxSize && !this.connections.has(poolKey)) {
-      throw new ConnectionError(
-        `Connection pool limit reached (${this._maxSize}). Close unused connections first.`,
-        "pool_limit_reached",
-      );
+    if (!this.connections.has(poolKey)) {
+      const usage = this.connections.size / this._maxSize;
+      if (usage >= 0.8 && usage < 1) {
+        log.warn("pool_nearing_limit", {
+          size: this.connections.size,
+          max: this._maxSize,
+          message: "Per-user credential connections may be contributing to pool usage",
+        });
+      }
+      if (this.connections.size >= this._maxSize) {
+        throw new ConnectionError(
+          `Connection pool limit reached (${this._maxSize}). Per-user credential connections may be contributing -- close unused connections or increase MCP2CLI_POOL_MAX.`,
+          "pool_limit_reached",
+        );
+      }
     }
 
     // Use override if provided, otherwise look up by service name
-    const serviceName = poolKey.split("::")[0]!;
-    const serviceConfig = serviceConfigOverride ?? config.services[serviceName];
+    const serviceConfig = serviceConfigOverride ?? config.services[baseServiceName];
     if (!serviceConfig) {
       throw new ConnectionError(
-        `Service not found in config: ${serviceName}`,
+        `Service not found in config: ${baseServiceName}`,
         "service_not_configured",
       );
     }
@@ -108,9 +120,9 @@ export class ConnectionPool {
     log.info("connecting", { service: poolKey });
     let connectFn: () => Promise<McpConnection>;
     if (serviceConfig.backend === "http") {
-      connectFn = () => this.connectHttpWithFallback(poolKey, serviceConfig);
+      connectFn = () => this.connectHttpWithFallback(poolKey, baseServiceName, serviceConfig);
     } else if (serviceConfig.backend === "websocket") {
-      connectFn = () => this.connectWebSocketWithFallback(poolKey, serviceConfig);
+      connectFn = () => this.connectWebSocketWithFallback(poolKey, baseServiceName, serviceConfig);
     } else if (serviceConfig.backend === "stdio") {
       connectFn = () => connectToService(serviceConfig);
     } else {
@@ -125,13 +137,14 @@ export class ConnectionPool {
         this.connections.set(poolKey, {
           connection,
           connectedAt: Date.now(),
+          baseServiceName,
         });
         this.pending.delete(poolKey);
         log.info("connected", { service: poolKey });
         // ADV-02: Fire-and-forget drift check on new connection
         // ADV-06: Pass access policy for skill auto-regeneration filtering
         const policy = extractPolicy(serviceConfig);
-        checkDriftOnConnect(serviceName, connection, policy).catch(() => {});
+        checkDriftOnConnect(baseServiceName, connection, policy).catch(() => {});
         return connection;
       },
       (err) => {
@@ -159,10 +172,9 @@ export class ConnectionPool {
 
   /** Close all per-user connections for a service (keys matching "serviceName::*"). */
   async closeServicePattern(serviceName: string): Promise<void> {
-    const prefix = serviceName + "::";
     const toClose: Array<[string, PoolEntry]> = [];
     for (const [key, entry] of this.connections) {
-      if (key.startsWith(prefix)) {
+      if (entry.baseServiceName === serviceName && key !== serviceName) {
         toClose.push([key, entry]);
       }
     }
@@ -194,8 +206,8 @@ export class ConnectionPool {
   /** Base service names with ::userId suffixes stripped. Deduplicated. */
   get baseServiceNames(): string[] {
     const names = new Set<string>();
-    for (const key of this.connections.keys()) {
-      names.add(key.split("::")[0]!);
+    for (const entry of this.connections.values()) {
+      names.add(entry.baseServiceName);
     }
     return Array.from(names);
   }
@@ -245,10 +257,11 @@ export class ConnectionPool {
    */
   private async connectWebSocketWithFallback(
     serviceName: string,
+    baseService: string,
     serviceConfig: WebSocketService,
   ): Promise<McpConnection> {
     const hasFallback = !!serviceConfig.fallback;
-    const attemptWs = await shouldAttemptHttp(serviceName);
+    const attemptWs = await shouldAttemptHttp(baseService);
 
     if (!attemptWs) {
       if (hasFallback) {
@@ -266,10 +279,10 @@ export class ConnectionPool {
 
     try {
       const connection = await connectToWebSocketService(serviceConfig);
-      await recordSuccess(serviceName);
+      await recordSuccess(baseService);
       return connection;
     } catch (err) {
-      await recordFailure(serviceName);
+      await recordFailure(baseService);
       const message = err instanceof Error ? err.message : String(err);
 
       if (hasFallback) {
@@ -314,10 +327,11 @@ export class ConnectionPool {
    */
   private async connectHttpWithFallback(
     serviceName: string,
+    baseService: string,
     serviceConfig: HttpService,
   ): Promise<McpConnection> {
     const hasFallback = !!serviceConfig.fallback;
-    const attemptHttp = await shouldAttemptHttp(serviceName);
+    const attemptHttp = await shouldAttemptHttp(baseService);
 
     // Circuit is open -- skip HTTP entirely
     if (!attemptHttp) {
@@ -338,10 +352,10 @@ export class ConnectionPool {
     // Attempt HTTP connection
     try {
       const connection = await connectToHttpService(serviceConfig);
-      await recordSuccess(serviceName);
+      await recordSuccess(baseService);
       return connection;
     } catch (err) {
-      await recordFailure(serviceName);
+      await recordFailure(baseService);
       const message = err instanceof Error ? err.message : String(err);
 
       if (hasFallback) {

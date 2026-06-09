@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -130,6 +130,13 @@ describe("CredentialManager", () => {
       const mgr = makeManager(config);
       expect(mgr.resolve("bob", "svc")!.headers!.X).toBe("group-a");
     });
+
+    test("resolveWithSource reports the effective credential source", () => {
+      const mgr = makeManager();
+      expect(mgr.resolveWithSource("rico", "open-brain")?.source).toBe("user");
+      expect(mgr.resolveWithSource("skippy", "open-brain")?.identity).toBe("ai_agents");
+      expect(mgr.resolveWithSource("unknown-user", "proxmox")?.source).toBe("default");
+    });
   });
 
   describe("setCredential", () => {
@@ -163,6 +170,19 @@ describe("CredentialManager", () => {
       await Bun.write(configPath, "{}");
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
       expect(mgr.setCredential("rico", "svc", { headers: { bad: 123 } })).rejects.toThrow(CredentialManagerError);
+    });
+
+    test("creates parent directory on first write", async () => {
+      const missingPath = join(tmpDir, "missing", "nested", "credentials.json");
+      const mgr = new CredentialManager(
+        { groups: {}, credentials: {}, defaults: {} },
+        missingPath,
+      );
+
+      await mgr.setCredential("rico", "svc", { headers: { Authorization: "Bearer new" } });
+
+      const disk = await Bun.file(missingPath).json();
+      expect(disk.credentials.rico.svc.headers.Authorization).toBe("Bearer new");
     });
   });
 
@@ -233,6 +253,24 @@ describe("CredentialManager", () => {
       expect(mgr.addGroup("ai_agents", ["test"])).rejects.toThrow(CredentialManagerError);
     });
 
+    test("addGroup rejects names that conflict with credential identities", async () => {
+      await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
+      const mgr = makeManager();
+      expect(mgr.addGroup("rico", ["alice"])).rejects.toThrow(CredentialManagerError);
+    });
+
+    test("addGroup rejects non-string members", async () => {
+      await Bun.write(configPath, "{}");
+      const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
+      expect(mgr.addGroup("team", ["alice", 123] as unknown as string[])).rejects.toThrow(CredentialManagerError);
+    });
+
+    test("addGroup rejects reserved object keys", async () => {
+      await Bun.write(configPath, "{}");
+      const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
+      expect(mgr.addGroup("__proto__", ["alice"])).rejects.toThrow(CredentialManagerError);
+    });
+
     test("addGroupMembers adds new members", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
@@ -249,6 +287,19 @@ describe("CredentialManager", () => {
       expect(mgr.addGroupMembers("nope", ["x"])).rejects.toThrow(CredentialManagerError);
     });
 
+    test("addGroupMembers rejects non-string members", async () => {
+      await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
+      const mgr = makeManager();
+      expect(mgr.addGroupMembers("ai_agents", ["claude", false] as unknown as string[])).rejects.toThrow(CredentialManagerError);
+    });
+
+    test("setCredential allows credentials for existing groups", async () => {
+      await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
+      const mgr = makeManager();
+      await mgr.setCredential("ai_agents", "svc", { headers: { X: "1" } });
+      expect(mgr.resolve("skippy", "svc")?.headers?.X).toBe("1");
+    });
+
     test("removeGroupMembers removes specified members", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
@@ -256,6 +307,12 @@ describe("CredentialManager", () => {
       const members = mgr.getGroupMembers("ai_agents")!;
       expect(members).not.toContain("bilby");
       expect(members).toContain("skippy");
+    });
+
+    test("removeGroupMembers rejects non-string members", async () => {
+      await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
+      const mgr = makeManager();
+      expect(mgr.removeGroupMembers("ai_agents", ["bilby", null] as unknown as string[])).rejects.toThrow(CredentialManagerError);
     });
 
     test("removeGroup removes the group", async () => {
@@ -308,6 +365,24 @@ describe("CredentialManager", () => {
 
       await mgr.reloadFromDisk();
       expect(mgr.identityNames).toContain("newUser");
+    });
+
+    test("reload closes existing pool connections", async () => {
+      await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
+      const mgr = makeManager();
+      const closeAll = mock(() => Promise.resolve());
+      mgr.setPool({
+        closeAll,
+        closeService: mock(() => Promise.resolve()),
+        closeServicePattern: mock(() => Promise.resolve()),
+      } as never);
+
+      const updated = structuredClone(SAMPLE_CONFIG);
+      updated.defaults.proxmox = { headers: { Authorization: "PVEAPIToken=rotated" } };
+      await Bun.write(configPath, JSON.stringify(updated));
+
+      await mgr.reloadFromDisk();
+      expect(closeAll).toHaveBeenCalledTimes(1);
     });
 
     test("throws when file does not exist", async () => {

@@ -37,6 +37,20 @@ describe("mergeCredentials", () => {
     expect((result as { headers: Record<string, string> }).headers.Authorization).toBe("Bearer override");
   });
 
+  test("creates headers when http service has none", () => {
+    const service = {
+      backend: "http",
+      url: "http://localhost:3000/mcp",
+    } as unknown as ServiceConfig;
+    const cred: ServiceCredential = {
+      headers: { Authorization: "Bearer user-key" },
+    };
+    const result = mergeCredentials(service, cred);
+    expect((result as { headers: Record<string, string> }).headers).toEqual({
+      Authorization: "Bearer user-key",
+    });
+  });
+
   test("merges env into stdio service config", () => {
     const service: ServiceConfig = {
       backend: "stdio",
@@ -66,6 +80,21 @@ describe("mergeCredentials", () => {
     };
     const result = mergeCredentials(service, cred);
     expect((result as { env: Record<string, string> }).env.API_KEY).toBe("override");
+  });
+
+  test("creates env when stdio service has none", () => {
+    const service = {
+      backend: "stdio",
+      command: "npx",
+      args: ["-y", "some-mcp"],
+    } as unknown as ServiceConfig;
+    const cred: ServiceCredential = {
+      env: { API_KEY: "user-key" },
+    };
+    const result = mergeCredentials(service, cred);
+    expect((result as { env: Record<string, string> }).env).toEqual({
+      API_KEY: "user-key",
+    });
   });
 
   test("does not mutate the original service config", () => {
@@ -122,10 +151,14 @@ describe("userPoolKey", () => {
   });
 
   test("returns service::userId when userId provided", () => {
-    expect(userPoolKey("open-brain", "rico")).toBe("open-brain::rico");
+    expect(userPoolKey("open-brain", "rico")).toMatch(/^credential:/);
   });
 
   test("returns service name when userId is undefined", () => {
     expect(userPoolKey("n8n", undefined)).toBe("n8n");
+  });
+
+  test("credential scoped keys do not collide when components contain delimiters", () => {
+    expect(userPoolKey("a", "b::c")).not.toBe(userPoolKey("a::b", "c"));
   });
 });
