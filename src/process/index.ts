@@ -2,6 +2,7 @@ export {
   callViaDaemon,
   listToolsViaDaemon,
   getSchemaViaDaemon,
+  fetchDaemonApi,
 } from "./client.ts";
 export {
   getDaemonStatus,

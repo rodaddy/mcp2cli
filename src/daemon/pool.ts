@@ -60,38 +60,44 @@ export class ConnectionPool {
    * Concurrent calls for the same unconnected service share one connection attempt.
    * MEM-05: Cached connections are health-checked before reuse.
    * MEM-04: New connections are rejected if pool is at capacity.
+   *
+   * @param poolKey - The cache key (service name, or "service::userId" for per-user connections)
+   * @param config - Full services config (used to look up service by name)
+   * @param serviceConfigOverride - Optional pre-merged service config (skips config lookup when provided)
    */
   async getConnection(
-    serviceName: string,
+    poolKey: string,
     config: ServicesConfig,
+    serviceConfigOverride?: import("../config/index.ts").ServiceConfig,
   ): Promise<McpConnection> {
     // Check cached connection with health validation
-    const cached = this.connections.get(serviceName);
+    const cached = this.connections.get(poolKey);
     if (cached) {
       const healthy = await this.isHealthy(cached.connection);
       if (healthy) return cached.connection;
 
       // Stale connection -- remove and reconnect
-      log.warn("stale_connection", { service: serviceName });
-      this.connections.delete(serviceName);
+      log.warn("stale_connection", { service: poolKey });
+      this.connections.delete(poolKey);
       await cached.connection.close().catch(() => {});
       // Fall through to create new connection
     }
 
     // Check if someone else is already connecting
-    const pendingPromise = this.pending.get(serviceName);
+    const pendingPromise = this.pending.get(poolKey);
     if (pendingPromise) return pendingPromise;
 
     // MEM-04: Enforce pool size limit for genuinely new connections
-    if (this.connections.size >= this._maxSize && !this.connections.has(serviceName)) {
+    if (this.connections.size >= this._maxSize && !this.connections.has(poolKey)) {
       throw new ConnectionError(
         `Connection pool limit reached (${this._maxSize}). Close unused connections first.`,
         "pool_limit_reached",
       );
     }
 
-    // Look up service config
-    const serviceConfig = config.services[serviceName];
+    // Use override if provided, otherwise look up by service name
+    const serviceName = poolKey.split("::")[0]!;
+    const serviceConfig = serviceConfigOverride ?? config.services[serviceName];
     if (!serviceConfig) {
       throw new ConnectionError(
         `Service not found in config: ${serviceName}`,
@@ -99,29 +105,29 @@ export class ConnectionPool {
       );
     }
     // Create connection promise and store in pending map
-    log.info("connecting", { service: serviceName });
+    log.info("connecting", { service: poolKey });
     let connectFn: () => Promise<McpConnection>;
     if (serviceConfig.backend === "http") {
-      connectFn = () => this.connectHttpWithFallback(serviceName, serviceConfig);
+      connectFn = () => this.connectHttpWithFallback(poolKey, serviceConfig);
     } else if (serviceConfig.backend === "websocket") {
-      connectFn = () => this.connectWebSocketWithFallback(serviceName, serviceConfig);
+      connectFn = () => this.connectWebSocketWithFallback(poolKey, serviceConfig);
     } else if (serviceConfig.backend === "stdio") {
       connectFn = () => connectToService(serviceConfig);
     } else {
       const backend = (serviceConfig as { backend: string }).backend;
       throw new ConnectionError(
-        `Unsupported backend for service ${serviceName}: ${backend}`,
+        `Unsupported backend for service ${poolKey}: ${backend}`,
         "unsupported_backend",
       );
     }
     const connectPromise = connectFn().then(
       (connection) => {
-        this.connections.set(serviceName, {
+        this.connections.set(poolKey, {
           connection,
           connectedAt: Date.now(),
         });
-        this.pending.delete(serviceName);
-        log.info("connected", { service: serviceName });
+        this.pending.delete(poolKey);
+        log.info("connected", { service: poolKey });
         // ADV-02: Fire-and-forget drift check on new connection
         // ADV-06: Pass access policy for skill auto-regeneration filtering
         const policy = extractPolicy(serviceConfig);
@@ -129,24 +135,41 @@ export class ConnectionPool {
         return connection;
       },
       (err) => {
-        this.pending.delete(serviceName);
+        this.pending.delete(poolKey);
         const message = err instanceof Error ? err.message : String(err);
-        log.error("connect_failed", { service: serviceName, error: message });
+        log.error("connect_failed", { service: poolKey, error: message });
         throw err;
       },
     );
 
-    this.pending.set(serviceName, connectPromise);
+    this.pending.set(poolKey, connectPromise);
     return connectPromise;
   }
 
-  /** Close and remove a single service connection. */
+  /** Close and remove a service connection by exact key, plus any per-user connections. */
   async closeService(serviceName: string): Promise<void> {
     const entry = this.connections.get(serviceName);
     if (entry) {
       log.info("disconnecting", { service: serviceName });
       this.connections.delete(serviceName);
       await entry.connection.close();
+    }
+    await this.closeServicePattern(serviceName);
+  }
+
+  /** Close all per-user connections for a service (keys matching "serviceName::*"). */
+  async closeServicePattern(serviceName: string): Promise<void> {
+    const prefix = serviceName + "::";
+    const toClose: Array<[string, PoolEntry]> = [];
+    for (const [key, entry] of this.connections) {
+      if (key.startsWith(prefix)) {
+        toClose.push([key, entry]);
+      }
+    }
+    for (const [key, entry] of toClose) {
+      log.info("disconnecting", { service: key });
+      this.connections.delete(key);
+      await entry.connection.close().catch(() => {});
     }
   }
 
@@ -163,9 +186,18 @@ export class ConnectionPool {
     return this.connections.size;
   }
 
-  /** Names of all connected services. */
+  /** Names of all connected services (raw pool keys, may include ::userId suffixes). */
   get serviceNames(): string[] {
     return Array.from(this.connections.keys());
+  }
+
+  /** Base service names with ::userId suffixes stripped. Deduplicated. */
+  get baseServiceNames(): string[] {
+    const names = new Set<string>();
+    for (const key of this.connections.keys()) {
+      names.add(key.split("::")[0]!);
+    }
+    return Array.from(names);
   }
 
   /**

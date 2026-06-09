@@ -32,8 +32,8 @@ export interface AuthProvider {
 /** Permissions by role. Higher roles inherit lower permissions. */
 const ROLE_PERMISSIONS: Record<Role, Set<string>> = {
   viewer: new Set(["list", "status"]),
-  agent: new Set(["list", "status", "call", "list-tools", "schema"]),
-  admin: new Set(["list", "status", "call", "list-tools", "schema", "add", "update", "remove", "reload", "import", "shutdown"]),
+  agent: new Set(["list", "status", "call", "list-tools", "schema", "credentials-read"]),
+  admin: new Set(["list", "status", "call", "list-tools", "schema", "add", "update", "remove", "reload", "import", "shutdown", "credentials-read", "credentials-write"]),
 };
 
 /** Check if a role has a specific permission. */

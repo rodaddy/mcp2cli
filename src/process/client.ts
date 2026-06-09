@@ -371,3 +371,32 @@ export async function getSchemaViaDaemon(
 ): Promise<DaemonResponse> {
   return fetchDaemon("/schema", request);
 }
+
+/**
+ * Generic daemon API call supporting any HTTP method and path.
+ * Used by CLI commands for management endpoints (credentials, etc.).
+ * Always routes to local daemon (management APIs are local-only).
+ */
+export async function fetchDaemonApi(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  const paths = getDaemonPaths();
+  await ensureDaemon(paths);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const localToken = await getLocalToken();
+  if (localToken) {
+    headers["Authorization"] = `Bearer ${localToken}`;
+  }
+  const response = await fetch(`http://localhost${path}`, {
+    unix: paths.socketPath,
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  return await response.json();
+}
