@@ -132,7 +132,8 @@ describe("Daemon Observability", () => {
 
       expect(body.status).toBe("ok");
       expect(body.uptime).toBeDefined();
-      expect(body.services).toBeDefined();
+      expect(body.configuredServices).toBeDefined();
+      expect(body.connectedServices).toBeDefined();
       expect(body.activeConnections).toBeDefined();
 
       // Memory stats
