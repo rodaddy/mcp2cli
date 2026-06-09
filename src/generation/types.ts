@@ -10,6 +10,9 @@ export interface SkillTemplateInput {
   description: string;
   tools: ToolSummary[];
   triggerKeywords: string[];
+  generatedAt?: string;
+  schemaHash?: string;
+  toolCount?: number;
 }
 
 /** A group of related tools clustered by noun prefix */

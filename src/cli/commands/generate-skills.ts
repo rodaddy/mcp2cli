@@ -25,6 +25,7 @@ import type { ConflictMode, SkillTemplateInput } from "../../generation/types.ts
 import type { SchemaOutput } from "../../schema/types.ts";
 import type { ToolSummary } from "../../schema/types.ts";
 import { join } from "node:path";
+import { computeSchemaHash } from "../../generation/skill-hash.ts";
 
 /**
  * Extract trigger keywords from tool descriptions.
@@ -235,19 +236,40 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     const descriptions = tools.map((t) => t.description);
     const triggerKeywords = extractTriggerKeywords(serviceName, descriptions);
 
+    // Compute schema hash from tool names + descriptions for drift detection
+    const schemaHash = await computeSchemaHash(tools);
+
+    // H3: Only update generatedAt when the schema hash actually changes
+    const outputDir = resolveOutputDir(serviceName, outputFlag);
+    const existingSkillContent = await readExistingSkillFile(outputDir);
+    let generatedAt: string;
+    if (existingSkillContent) {
+      const existingHashMatch = existingSkillContent.match(/^schema_hash:\s*(\S+)/m);
+      const existingHash = existingHashMatch?.[1];
+      if (existingHash === schemaHash) {
+        // Reuse existing timestamp when schema hasn't changed
+        const existingAtMatch = existingSkillContent.match(/^generated_at:\s*(\S+)/m);
+        generatedAt = existingAtMatch?.[1] ?? new Date().toISOString();
+      } else {
+        generatedAt = new Date().toISOString();
+      }
+    } else {
+      generatedAt = new Date().toISOString();
+    }
+
     const input: SkillTemplateInput = {
       serviceName,
       description: `MCP tools for ${serviceName}`,
       tools,
       triggerKeywords,
+      generatedAt,
+      schemaHash,
+      toolCount: tools.length,
     };
-
-    // Resolve output directory
-    const outputDir = resolveOutputDir(serviceName, outputFlag);
 
     // --diff mode: preview changes without writing
     if (diffMode) {
-      const existingContent = await readExistingSkillFile(outputDir);
+      const existingContent = existingSkillContent;
       const existingTools = existingContent
         ? parseExistingTools(existingContent)
         : [];
@@ -262,9 +284,8 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     let skillMd = generateSkillMd(input);
 
     // Preserve manual sections from existing SKILL.md
-    const existingContent = await readExistingSkillFile(outputDir);
-    if (existingContent) {
-      const manualSections = extractManualSections(existingContent);
+    if (existingSkillContent) {
+      const manualSections = extractManualSections(existingSkillContent);
       if (manualSections.length > 0) {
         skillMd = injectManualSections(skillMd, manualSections);
       }

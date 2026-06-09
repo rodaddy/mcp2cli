@@ -11,6 +11,7 @@ import { generateSkillMd, generateReferenceMd, estimateTokens } from "./template
 import { detectPrefixGroups } from "./grouping.ts";
 import { resolveOutputDir, planFileWrites, executeFileWrites } from "./file-manager.ts";
 import { extractManualSections, injectManualSections } from "./preserve.ts";
+import { computeSchemaHash } from "./skill-hash.ts";
 import { createLogger } from "../logger/index.ts";
 import { join } from "node:path";
 
@@ -62,25 +63,40 @@ export async function autoRegenerateSkills(
       return result;
     }
 
-    // Build skill template input
+    // Build skill template input with metadata (L17)
+    const schemaHash = await computeSchemaHash(filteredTools);
+
+    // L7: Read existing SKILL.md once and reuse for hash comparison + manual section extraction
+    const resolvedDir = outputDir ?? resolveOutputDir(serviceName);
+    const existingSkillPath = join(resolvedDir, "SKILL.md");
+    const existingFile = Bun.file(existingSkillPath);
+    const existingContent = await existingFile.exists() ? await existingFile.text() : null;
+
+    // Reuse existing timestamp if hash hasn't changed
+    let generatedAt = new Date().toISOString();
+    if (existingContent) {
+      const existingHashMatch = existingContent.match(/^schema_hash:\s*(\S+)/m);
+      if (existingHashMatch?.[1] === schemaHash) {
+        const existingAtMatch = existingContent.match(/^generated_at:\s*(\S+)/m);
+        generatedAt = existingAtMatch?.[1] ?? generatedAt;
+      }
+    }
+
     const input: SkillTemplateInput = {
       serviceName,
       description: `MCP tools for ${serviceName}`,
       tools: filteredTools,
       triggerKeywords: [serviceName],
+      generatedAt,
+      schemaHash,
+      toolCount: filteredTools.length,
     };
-
-    // Resolve output directory
-    const resolvedDir = outputDir ?? resolveOutputDir(serviceName);
 
     // Generate new SKILL.md
     let skillMd = generateSkillMd(input);
 
     // Preserve manual sections from existing file
-    const existingSkillPath = join(resolvedDir, "SKILL.md");
-    const existingFile = Bun.file(existingSkillPath);
-    if (await existingFile.exists()) {
-      const existingContent = await existingFile.text();
+    if (existingContent) {
       const manualSections = extractManualSections(existingContent);
       if (manualSections.length > 0) {
         skillMd = injectManualSections(skillMd, manualSections);

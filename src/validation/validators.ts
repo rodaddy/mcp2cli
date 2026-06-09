@@ -126,6 +126,26 @@ export function rejectOverlongInput(
 }
 
 /**
+ * Reject strings containing path separators (/ or \) (SEC-06).
+ * Identifiers should be flat names, not paths. Catches cases where
+ * slashes are present without ".." (which PATH_TRAVERSAL_REGEX requires).
+ */
+export function rejectPathSeparators(
+  value: string,
+  fieldName: string,
+): ValidationResult {
+  if (value.includes("/") || value.includes("\\")) {
+    return {
+      valid: false,
+      code: "PATH_TRAVERSAL",
+      field: fieldName,
+      message: `${fieldName} must not contain path separators ('/' or '\\')`,
+    };
+  }
+  return { valid: true };
+}
+
+/**
  * Reject empty or whitespace-only strings (SEC-05).
  * Catches empty identifiers that would produce silent downstream failures.
  */
