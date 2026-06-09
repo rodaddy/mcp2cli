@@ -132,7 +132,7 @@ describe("grep command", () => {
   test("shows usage when no pattern provided", async () => {
     const output = await captureGrep([]);
     expect(output).toContain("Usage:");
-    expect(output).toContain("grep");
+    expect(output).toContain("search");
   });
 
   test("matches in both name and description return only one line", async () => {
@@ -143,5 +143,54 @@ describe("grep command", () => {
     const output = await captureGrep(["workflow"]);
     const lines = output.split("\n").filter((l) => l.includes("svc.list_workflows"));
     expect(lines).toHaveLength(1);
+  });
+
+  test("--json returns structured JSON output", async () => {
+    await writeCache("n8n", [
+      makeTool("list_workflows", "List all workflows"),
+      makeTool("delete_node", "Delete a node"),
+    ]);
+
+    const output = await captureGrep(["workflow", "--json"]);
+    const result = JSON.parse(output);
+    expect(result.query).toBe("workflow");
+    expect(result.total).toBe(1);
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0].service).toBe("n8n");
+    expect(result.matches[0].tool).toBe("list_workflows");
+    expect(result.matches[0].description).toBe("List all workflows");
+    expect(result.matches[0].match).toBe("both");
+  });
+
+  test("--json with no matches returns empty array", async () => {
+    await writeCache("svc", [makeTool("tool_a", "Does things")]);
+
+    const output = await captureGrep(["nonexistent", "--json"]);
+    const result = JSON.parse(output);
+    expect(result.query).toBe("nonexistent");
+    expect(result.total).toBe(0);
+    expect(result.matches).toHaveLength(0);
+  });
+
+  test("--json with no cached schemas returns empty result", async () => {
+    const output = await captureGrep(["anything", "--json"]);
+    const result = JSON.parse(output);
+    expect(result.total).toBe(0);
+    expect(result.matches).toHaveLength(0);
+  });
+
+  test("--json match field distinguishes name vs description vs both", async () => {
+    await writeCache("svc", [
+      makeTool("workflow_list", "Lists things"),
+      makeTool("tool_a", "Manages workflow state"),
+      makeTool("workflow_runner", "Runs workflows"),
+    ]);
+
+    const output = await captureGrep(["workflow", "--json"]);
+    const result = JSON.parse(output);
+    const byTool = new Map(result.matches.map((m: { tool: string; match: string }) => [m.tool, m.match]));
+    expect(byTool.get("workflow_list")).toBe("name");
+    expect(byTool.get("tool_a")).toBe("description");
+    expect(byTool.get("workflow_runner")).toBe("both");
   });
 });

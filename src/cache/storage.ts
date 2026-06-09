@@ -91,6 +91,7 @@ export async function readCache(service: string): Promise<CacheEntry | null> {
   // Validate tool shapes -- reject entries missing required fields
   entry.tools = entry.tools.filter((t) => {
     if (typeof t.name !== "string" || !t.name) return false;
+    if (typeof t.description !== "string") return false;
     if (typeof t.inputSchema !== "object" || t.inputSchema === null) return false;
     return true;
   });
@@ -231,6 +232,7 @@ export async function readCacheRaw(service: string): Promise<CacheEntry | null> 
     // Validate tool shapes -- reject entries missing required fields
     entry.tools = entry.tools.filter((t) => {
       if (typeof t.name !== "string" || !t.name) return false;
+      if (typeof t.description !== "string") return false;
       if (typeof t.inputSchema !== "object" || t.inputSchema === null) return false;
       return true;
     });

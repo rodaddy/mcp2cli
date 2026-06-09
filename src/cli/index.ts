@@ -45,6 +45,7 @@ const COMMANDS: Record<string, CommandHandler> = {
   schema: handleSchema,
   cache: handleCache,
   grep: handleGrep,
+  search: handleGrep,
   batch: handleBatch,
   daemon: handleDaemonDispatch,
   bootstrap: handleBootstrap,
