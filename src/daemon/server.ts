@@ -17,6 +17,7 @@ import type {
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
 import { listToolsCached, getToolSchemaCached, resolveToolNameCached } from "../schema/cached.ts";
+import { auditToolCall } from "../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../access/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { ToolError } from "../invocation/errors.ts";
@@ -102,10 +103,14 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         let callService = "unknown";
         let callTool = "unknown";
         let success = false;
+        let callParams: Record<string, unknown> | undefined;
+        let callResult: unknown;
+        let callError: string | undefined;
         try {
           const body = (await req.json()) as DaemonCallRequest;
           callService = body.service;
           callTool = body.tool;
+          callParams = body.params;
           const conn = await pool.getConnection(body.service, getConfig());
 
           // MEM-02: AbortSignal timeout on tool calls
@@ -156,6 +161,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const formatted = formatToolResult(
             sdkResult as Parameters<typeof formatToolResult>[0],
           );
+          callResult = formatted.result;
           const response: DaemonCallResponse = {
             success: true,
             result: formatted.result,
@@ -164,6 +170,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         } catch (err) {
           const duration = Math.round(performance.now() - startTime);
           const message = err instanceof Error ? err.message : String(err);
+          callError = message;
           reqLog.info("tool_call", { service: callService, tool: callTool, duration, result: "error", error: message });
           // MEM-02: map timeout errors to TOOL_TIMEOUT code
           if (err instanceof ToolError && err.message.includes("timed out")) {
@@ -173,6 +180,16 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         } finally {
           const duration = Math.round(performance.now() - startTime);
           metrics.onRequestEnd(callService, callTool, success, duration);
+          auditToolCall({
+            path: "daemon",
+            service: callService,
+            tool: callTool,
+            params: callParams,
+            result: callResult,
+            durationMs: duration,
+            success,
+            error: callError,
+          });
           idleTimer.onRequestEnd();
         }
       }

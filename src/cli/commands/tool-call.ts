@@ -11,6 +11,7 @@ import { connectToService, connectToHttpService } from "../../connection/index.t
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { getToolSchemaCached, resolveToolNameCached } from "../../schema/cached.ts";
+import { auditToolCall } from "../../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
@@ -166,6 +167,11 @@ export async function handleToolCall(args: string[]): Promise<void> {
       ? await connectToWebSocketService(service)
       : await connectToService(service);
 
+  const directStartTime = performance.now();
+  let directSuccess = false;
+  let directResult: unknown;
+  let directError: string | undefined;
+
   try {
     // Dry-run interception (inside try/finally so connection closes)
     if (parsed.value.dryRun) {
@@ -208,6 +214,8 @@ export async function handleToolCall(args: string[]): Promise<void> {
 
     // 7. Format result (throws ToolError if isError=true)
     const output = formatToolResult(result as Parameters<typeof formatToolResult>[0]);
+    directResult = output.result;
+    directSuccess = true;
 
     // 8. Field masking on successful response
     let outputData = output.result;
@@ -220,7 +228,21 @@ export async function handleToolCall(args: string[]): Promise<void> {
     }
     console.log(formatOutput(outputData, parsed.value.format));
     process.exitCode = EXIT_CODES.SUCCESS;
+  } catch (err) {
+    directError = err instanceof Error ? err.message : String(err);
+    throw err;
   } finally {
+    const directDuration = Math.round(performance.now() - directStartTime);
+    auditToolCall({
+      path: "cli",
+      service: parsed.value.serviceName,
+      tool: parsed.value.toolName,
+      params: parsed.value.params,
+      result: directResult,
+      durationMs: directDuration,
+      success: directSuccess,
+      error: directError,
+    });
     await connection.close();
   }
 }
