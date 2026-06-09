@@ -177,7 +177,7 @@ describe("Daemon Observability", () => {
       await pool.closeAll();
     });
 
-    test("successful /call logs tool_call with service, tool, duration, result=success", async () => {
+    test("successful /call logs response_out with service, tool, totalDuration, success=true", async () => {
       setLogLevel("info");
 
       const pool = new ConnectionPool();
@@ -196,23 +196,22 @@ describe("Daemon Observability", () => {
         await server.fetch(req);
       });
 
-      // Find the tool_call log entry from daemon:request component
-      const toolCallLines = parseLogEntries(lines).filter(
+      const responseLines = parseLogEntries(lines).filter(
         (e) =>
-          e.component === "daemon:request" && e.message === "tool_call",
+          e.component === "daemon:request" && e.message === "response_out",
       );
 
-      expect(toolCallLines.length).toBeGreaterThanOrEqual(1);
-      const entry = toolCallLines[0]!;
+      expect(responseLines.length).toBeGreaterThanOrEqual(1);
+      const entry = responseLines[0]!;
       expect(entry.data?.service).toBe("test-svc");
       expect(entry.data?.tool).toBe("my-tool");
-      expect(typeof entry.data?.duration).toBe("number");
-      expect(entry.data?.result).toBe("success");
+      expect(typeof entry.data?.totalDuration).toBe("number");
+      expect(entry.data?.success).toBe(true);
 
       await pool.closeAll();
     });
 
-    test("failed /call logs tool_call with result=error", async () => {
+    test("failed /call logs response_out with success=false and error", async () => {
       setLogLevel("info");
 
       // Make callTool fail
@@ -236,17 +235,17 @@ describe("Daemon Observability", () => {
         await server.fetch(req);
       });
 
-      const toolCallLines = parseLogEntries(lines).filter(
+      const responseLines = parseLogEntries(lines).filter(
         (e) =>
-          e.component === "daemon:request" && e.message === "tool_call",
+          e.component === "daemon:request" && e.message === "response_out",
       );
 
-      expect(toolCallLines.length).toBeGreaterThanOrEqual(1);
-      const entry = toolCallLines[0]!;
+      expect(responseLines.length).toBeGreaterThanOrEqual(1);
+      const entry = responseLines[0]!;
       expect(entry.data?.service).toBe("test-svc");
       expect(entry.data?.tool).toBe("fail-tool");
-      expect(typeof entry.data?.duration).toBe("number");
-      expect(entry.data?.result).toBe("error");
+      expect(typeof entry.data?.totalDuration).toBe("number");
+      expect(entry.data?.success).toBe(false);
       expect(entry.data?.error).toBeDefined();
 
       await pool.closeAll();
