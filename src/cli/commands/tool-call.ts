@@ -11,7 +11,7 @@ import { connectToService, connectToHttpService } from "../../connection/index.t
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { getToolSchemaCached, resolveToolNameCached } from "../../schema/cached.ts";
-import { auditToolCall } from "../../logger/audit.ts";
+import { auditToolCall, flushAuditQueue } from "../../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../../access/index.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
@@ -128,32 +128,59 @@ export async function handleToolCall(args: string[]): Promise<void> {
       return;
     }
 
-    const result = await callViaDaemon({
-      service: parsed.value.serviceName,
-      tool: parsed.value.toolName,
-      params: parsed.value.params,
-    });
+    const daemonStartTime = performance.now();
+    let daemonSuccess = false;
+    let daemonResult: unknown;
+    let daemonError: string | undefined;
 
-    if (result.success) {
-      // Field masking on successful daemon response
-      let outputData = result.result;
-      if (parsed.value.fields.length > 0) {
-        const { masked, missing } = applyFieldMask(result.result, parsed.value.fields);
-        for (const field of missing) {
-          process.stderr.write(`warning: field "${field}" not found in response\n`);
-        }
-        outputData = masked;
-      }
-      console.log(formatOutput(outputData, parsed.value.format));
-      process.exitCode = EXIT_CODES.SUCCESS;
-    } else {
-      printError({
-        error: true,
-        code: result.error.code,
-        message: result.error.message,
-        ...(result.error.reason ? { reason: result.error.reason } : {}),
+    try {
+      const result = await callViaDaemon({
+        service: parsed.value.serviceName,
+        tool: parsed.value.toolName,
+        params: parsed.value.params,
       });
-      process.exitCode = mapErrorCodeToExit(result.error.code);
+
+      if (result.success) {
+        daemonSuccess = true;
+        daemonResult = result.result;
+        // Field masking on successful daemon response
+        let outputData = result.result;
+        if (parsed.value.fields.length > 0) {
+          const { masked, missing } = applyFieldMask(result.result, parsed.value.fields);
+          for (const field of missing) {
+            process.stderr.write(`warning: field "${field}" not found in response\n`);
+          }
+          outputData = masked;
+        }
+        console.log(formatOutput(outputData, parsed.value.format));
+        process.exitCode = EXIT_CODES.SUCCESS;
+      } else {
+        daemonError = result.error.message;
+        printError({
+          error: true,
+          code: result.error.code,
+          message: result.error.message,
+          ...(result.error.reason ? { reason: result.error.reason } : {}),
+        });
+        process.exitCode = mapErrorCodeToExit(result.error.code);
+      }
+    } catch (err) {
+      daemonError = err instanceof Error ? err.message : String(err);
+      throw err;
+    } finally {
+      // CLI-side audit for daemon path (crash resilience + caller identification)
+      const daemonDuration = Math.round(performance.now() - daemonStartTime);
+      auditToolCall({
+        path: "cli",
+        service: parsed.value.serviceName,
+        tool: parsed.value.toolName,
+        params: parsed.value.params,
+        result: daemonResult,
+        durationMs: daemonDuration,
+        success: daemonSuccess,
+        error: daemonError,
+      });
+      await flushAuditQueue();
     }
     return;
   }
@@ -171,10 +198,14 @@ export async function handleToolCall(args: string[]): Promise<void> {
   let directSuccess = false;
   let directResult: unknown;
   let directError: string | undefined;
+  let directResolvedTool: string | undefined;
+  let dryRun = false;
+  const directTransport = service.backend;
 
   try {
     // Dry-run interception (inside try/finally so connection closes)
     if (parsed.value.dryRun) {
+      dryRun = true;
       const schema = await getToolSchemaCached(
         connection.client,
         parsed.value.toolName,
@@ -207,6 +238,8 @@ export async function handleToolCall(args: string[]): Promise<void> {
       parsed.value.toolName,
       parsed.value.serviceName,
     );
+    directResolvedTool = resolvedName !== parsed.value.toolName ? resolvedName : undefined;
+
     const result = await connection.client.callTool({
       name: resolvedName,
       arguments: parsed.value.params,
@@ -232,17 +265,23 @@ export async function handleToolCall(args: string[]): Promise<void> {
     directError = err instanceof Error ? err.message : String(err);
     throw err;
   } finally {
-    const directDuration = Math.round(performance.now() - directStartTime);
-    auditToolCall({
-      path: "cli",
-      service: parsed.value.serviceName,
-      tool: parsed.value.toolName,
-      params: parsed.value.params,
-      result: directResult,
-      durationMs: directDuration,
-      success: directSuccess,
-      error: directError,
-    });
+    // Skip audit for dry-run -- no actual tool invocation occurred
+    if (!dryRun) {
+      const directDuration = Math.round(performance.now() - directStartTime);
+      auditToolCall({
+        path: "cli",
+        service: parsed.value.serviceName,
+        tool: parsed.value.toolName,
+        resolvedTool: directResolvedTool,
+        transport: directTransport,
+        params: parsed.value.params,
+        result: directResult,
+        durationMs: directDuration,
+        success: directSuccess,
+        error: directError,
+      });
+      await flushAuditQueue();
+    }
     await connection.close();
   }
 }

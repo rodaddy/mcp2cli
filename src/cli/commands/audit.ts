@@ -1,38 +1,57 @@
 /**
  * Handle `mcp2cli audit <subcommand>` -- view and manage audit logs.
- * Supports: tail [n], search <pattern>, clear, path
+ * Supports: tail [n] [--json], search <pattern> [--json], clear, path, stats
  */
 import { stat, unlink } from "node:fs/promises";
-import { join } from "node:path";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { CommandHandler } from "../../types/index.ts";
+import { resolveAuditPath } from "../../logger/audit.ts";
 import type { AuditEntry } from "../../logger/audit.ts";
 
-function resolveAuditPath(): string {
-  const logDir = process.env.MCP2CLI_LOG_DIR
-    ?? join(process.env.HOME ?? "", ".cache", "mcp2cli", "logs");
-  return join(logDir, "audit.ndjson");
+interface ReadResult {
+  entries: AuditEntry[];
+  skippedLines: number;
 }
 
-async function readAuditEntries(limit?: number): Promise<AuditEntry[]> {
+async function readAuditEntries(opts?: { fromEnd?: number }): Promise<ReadResult> {
   const filePath = resolveAuditPath();
   const file = Bun.file(filePath);
-  if (!(await file.exists())) return [];
+  if (!(await file.exists())) return { entries: [], skippedLines: 0 };
 
-  const text = await file.text();
-  const lines = text.trim().split("\n").filter(Boolean);
+  let lines: string[];
+
+  if (opts?.fromEnd && opts.fromEnd > 0) {
+    // Efficient tail: read estimated bytes from end
+    const fileSize = file.size;
+    const estimatedBytes = opts.fromEnd * 2048;
+    if (estimatedBytes < fileSize) {
+      const slice = file.slice(fileSize - estimatedBytes);
+      const text = await slice.text();
+      // First line is likely partial, skip it
+      const allLines = text.split("\n").filter(Boolean);
+      lines = allLines.length > 1 ? allLines.slice(1) : allLines;
+    } else {
+      const text = await file.text();
+      lines = text.trim().split("\n").filter(Boolean);
+    }
+    // Take only the last N lines
+    lines = lines.slice(-opts.fromEnd);
+  } else {
+    const text = await file.text();
+    lines = text.trim().split("\n").filter(Boolean);
+  }
 
   const entries: AuditEntry[] = [];
+  let skippedLines = 0;
   for (const line of lines) {
     try {
       entries.push(JSON.parse(line) as AuditEntry);
-    } catch { /* skip malformed lines */ }
+    } catch {
+      skippedLines++;
+    }
   }
 
-  if (limit && limit > 0) {
-    return entries.slice(-limit);
-  }
-  return entries;
+  return { entries, skippedLines };
 }
 
 export const handleAudit: CommandHandler = async (args: string[]) => {
@@ -61,11 +80,11 @@ export const handleAudit: CommandHandler = async (args: string[]) => {
           "Usage: mcp2cli audit <subcommand>",
           "",
           "SUBCOMMANDS:",
-          "    tail [n]           Show last n audit entries (default: 20)",
-          "    search <pattern>   Search audit entries by service/tool/error",
-          "    stats              Show summary statistics from audit log",
-          "    clear              Delete the audit log",
-          "    path               Print the audit log file path",
+          "    tail [n] [--json]      Show last n audit entries (default: 20)",
+          "    search <pattern> [--json] Search audit entries by service/tool/error/params/response",
+          "    stats                  Show summary statistics from audit log",
+          "    clear                  Delete the audit log",
+          "    path                   Print the audit log file path",
         ].join("\n"),
       );
       process.exitCode = subcommand ? EXIT_CODES.VALIDATION : EXIT_CODES.SUCCESS;
@@ -78,7 +97,11 @@ async function handleAuditTail(args: string[]): Promise<void> {
   const count = parseInt(args.find((a) => !a.startsWith("--")) ?? "20", 10);
   const limit = Number.isNaN(count) || count <= 0 ? 20 : count;
 
-  const entries = await readAuditEntries(limit);
+  const { entries, skippedLines } = await readAuditEntries({ fromEnd: limit });
+
+  if (skippedLines > 0) {
+    process.stderr.write(`warning: ${skippedLines} malformed line(s) skipped\n`);
+  }
 
   if (entries.length === 0) {
     console.log("No audit entries found.");
@@ -108,13 +131,20 @@ async function handleAuditSearch(args: string[]): Promise<void> {
     return;
   }
 
-  const entries = await readAuditEntries();
+  const { entries, skippedLines } = await readAuditEntries();
+
+  if (skippedLines > 0) {
+    process.stderr.write(`warning: ${skippedLines} malformed line(s) skipped\n`);
+  }
+
   const lower = pattern.toLowerCase();
 
   const matches = entries.filter((e) =>
     e.service.toLowerCase().includes(lower) ||
     e.tool.toLowerCase().includes(lower) ||
-    (e.error ?? "").toLowerCase().includes(lower),
+    (e.error ?? "").toLowerCase().includes(lower) ||
+    JSON.stringify(e.params ?? "").toLowerCase().includes(lower) ||
+    (e.responseSummary ?? "").toLowerCase().includes(lower),
   );
 
   if (jsonMode) {
@@ -150,7 +180,11 @@ async function handleAuditClear(): Promise<void> {
 }
 
 async function handleAuditStats(): Promise<void> {
-  const entries = await readAuditEntries();
+  const { entries, skippedLines } = await readAuditEntries();
+
+  if (skippedLines > 0) {
+    process.stderr.write(`warning: ${skippedLines} malformed line(s) skipped\n`);
+  }
 
   if (entries.length === 0) {
     console.log("No audit entries found.");

@@ -13,6 +13,8 @@
 import type { LogLevel, LogEntry, Logger } from "./types.ts";
 
 export type { LogLevel, LogEntry, Logger } from "./types.ts";
+export { auditToolCall, flushAuditQueue } from "./audit.ts";
+export type { AuditEntry } from "./audit.ts";
 
 /** Numeric priority for each level. Higher = more verbose. */
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
