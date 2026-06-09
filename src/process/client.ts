@@ -10,6 +10,7 @@ import { constants } from "node:fs";
 import { getDaemonPaths, getRemoteConfig } from "../daemon/paths.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { getDaemonStatus, cleanStaleDaemon } from "./liveness.ts";
+import type { ServiceSource, ServicesConfig } from "../config/index.ts";
 import type { DaemonPaths } from "../daemon/types.ts";
 import type {
   DaemonCallRequest,
@@ -21,6 +22,7 @@ import type {
 const STARTUP_TIMEOUT_MS = 10_000;
 const STARTUP_POLL_MS = 50;
 const REQUEST_TIMEOUT_MS = 60_000;
+const REMOTE_CONNECT_TIMEOUT_MS = 10_000;
 const STALE_LOCK_THRESHOLD_MS = 30_000;
 
 /** Cached local token to avoid re-reading tokens.json on every request. */
@@ -30,16 +32,18 @@ let localTokenResolved = false;
 /**
  * Resolve a bearer token for local Unix socket connections.
  * Reads tokens.json and returns the first admin token.
- * Falls back to MCP2CLI_AUTH_TOKEN env var.
+ * Falls back to MCP2CLI_AUTH_TOKEN env var only when no remote URL is configured
+ * (otherwise the env var is the remote token, not the local one).
  * Caches the result for the process lifetime.
  */
 async function getLocalToken(): Promise<string | undefined> {
   if (localTokenResolved) return cachedLocalToken;
   localTokenResolved = true;
 
-  // Check env var first
+  // Only use MCP2CLI_AUTH_TOKEN for local auth when no remote URL is set,
+  // otherwise the token belongs to the remote daemon
   const envToken = process.env.MCP2CLI_AUTH_TOKEN;
-  if (envToken) {
+  if (envToken && !process.env.MCP2CLI_REMOTE_URL) {
     cachedLocalToken = envToken;
     return cachedLocalToken;
   }
@@ -185,58 +189,152 @@ export async function ensureDaemon(paths: DaemonPaths): Promise<void> {
 }
 
 /**
- * Shared fetch helper that routes to remote or local daemon.
- * - Remote: uses MCP2CLI_REMOTE_URL with Bearer token, skips ensureDaemon()
- * - Local: ensures daemon is running, fetches via Unix socket
+ * Cached local config for source routing.
+ * Intentionally process-lifetime cached: CLI is short-lived, so re-reading
+ * config on every request adds latency with no benefit.
+ */
+let cachedConfig: ServicesConfig | null = null;
+
+async function getLocalConfig(): Promise<ServicesConfig | null> {
+  if (!cachedConfig) {
+    try {
+      const { loadConfig } = await import("../config/index.ts");
+      cachedConfig = await loadConfig();
+    } catch {
+      return null;
+    }
+  }
+  return cachedConfig;
+}
+
+/**
+ * Resolve routing source for a service.
+ * Checks the local config's source field, defaults to:
+ * - "remote-local" when MCP2CLI_REMOTE_URL is set
+ * - "local" when no remote URL
+ */
+async function resolveSource(serviceName: string | undefined): Promise<ServiceSource> {
+  if (!serviceName) return undefined;
+  const config = await getLocalConfig();
+  const svc = config?.services[serviceName];
+  return svc?.source;
+}
+
+async function fetchLocal(
+  path: string,
+  body?: unknown,
+): Promise<DaemonResponse> {
+  const paths = getDaemonPaths();
+  await ensureDaemon(paths);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const localToken = await getLocalToken();
+  if (localToken) {
+    headers["Authorization"] = `Bearer ${localToken}`;
+  }
+  const response = await fetch(`http://localhost${path}`, {
+    unix: paths.socketPath,
+    method: "POST",
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  return (await response.json()) as DaemonResponse;
+}
+
+const REMOTE_RETRIES = parseInt(process.env.MCP2CLI_REMOTE_RETRIES ?? "3", 10);
+const REMOTE_BACKOFF_BASE_MS = parseInt(process.env.MCP2CLI_REMOTE_BACKOFF_MS ?? "500", 10);
+
+async function fetchRemote(
+  path: string,
+  body?: unknown,
+): Promise<DaemonResponse> {
+  const remote = getRemoteConfig()!;
+  const url = `${remote.url.replace(/\/$/, "")}${path}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (remote.token) {
+    headers["Authorization"] = `Bearer ${remote.token}`;
+  }
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < REMOTE_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(REMOTE_CONNECT_TIMEOUT_MS),
+      });
+
+      // Auth errors are permanent -- don't retry (wrong token won't become right)
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`Remote auth failed (${response.status})`);
+      }
+
+      const result = (await response.json()) as DaemonResponse;
+
+      // Application-level connection errors should trigger fallback
+      if (!result.success && result.error?.code === "CONNECTION_ERROR") {
+        throw new Error(result.error.message);
+      }
+
+      return result;
+    } catch (err) {
+      // Auth errors are permanent -- bail immediately, don't retry
+      if (err instanceof Error && err.message.startsWith("Remote auth failed")) {
+        throw err;
+      }
+      lastError = err;
+      if (attempt < REMOTE_RETRIES - 1) {
+        const delay = REMOTE_BACKOFF_BASE_MS * Math.pow(2, attempt);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Shared fetch helper with per-service routing.
+ * Routes based on the service's "source" field in local config:
+ * - "local": always use local daemon
+ * - "remote": always use remote daemon
+ * - "remote-local": try remote, fall back to local on failure
+ * Default (no source set): "remote-local" if MCP2CLI_REMOTE_URL is set, else "local".
  */
 async function fetchDaemon(
   path: string,
   body?: unknown,
 ): Promise<DaemonResponse> {
+  const serviceName = body && typeof body === "object" && "service" in body
+    ? (body as { service: string }).service
+    : undefined;
+
   const remote = getRemoteConfig();
+  const explicitSource = await resolveSource(serviceName);
+  const source = explicitSource ?? (remote ? "remote-local" : "local");
 
   try {
-    let response: Response;
-
-    if (remote) {
-      // Remote mode -- direct HTTP to remote daemon
-      const url = `${remote.url.replace(/\/$/, "")}${path}`;
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (remote.token) {
-        headers["Authorization"] = `Bearer ${remote.token}`;
-      }
-      response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } else {
-      // Local mode -- Unix socket
-      const paths = getDaemonPaths();
-      await ensureDaemon(paths);
-      const localHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      const localToken = await getLocalToken();
-      if (localToken) {
-        localHeaders["Authorization"] = `Bearer ${localToken}`;
-      }
-      response = await fetch(`http://localhost${path}`, {
-        unix: paths.socketPath,
-        method: "POST",
-        headers: localHeaders,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
+    if (source === "local" || !remote) {
+      return await fetchLocal(path, body);
     }
 
-    return (await response.json()) as DaemonResponse;
+    if (source === "remote") {
+      return await fetchRemote(path, body);
+    }
+
+    // "remote-local": try remote, fall back to local
+    try {
+      return await fetchRemote(path, body);
+    } catch {
+      return await fetchLocal(path, body);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const target = remote ? `remote daemon at ${remote.url}` : "daemon";
+    const target = source === "local" ? "local daemon" : remote ? `remote daemon at ${remote.url}` : "daemon";
     return {
       success: false,
       error: {

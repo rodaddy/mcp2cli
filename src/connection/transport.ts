@@ -4,7 +4,8 @@ import type { ConnectionOptions } from "./types.ts";
 import { parseJsonRpcLine } from "./filter.ts";
 import { ConnectionError } from "./errors.ts";
 import { createLogger } from "../logger/index.ts";
-import { mkdirSync, appendFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { stat, rename, unlink, appendFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const log = createLogger("transport");
@@ -108,6 +109,26 @@ export class McpTransport implements Transport {
     this.monitorExit(proc);
   }
 
+  private static readonly STDERR_MAX_SIZE = 10 * 1024 * 1024; // 10MB
+  private stderrBytesWritten = 0;
+
+  /** Rotate stderr log if over size limit. Single-backup retention. */
+  private async rotateStderrIfNeeded(logPath: string): Promise<void> {
+    try {
+      const stats = await stat(logPath);
+      // Initialize counter from actual file size on first check
+      if (this.stderrBytesWritten === 0) {
+        this.stderrBytesWritten = stats.size;
+      }
+      if (stats.size >= McpTransport.STDERR_MAX_SIZE) {
+        const backup = `${logPath}.1`;
+        try { await unlink(backup); } catch { /* no previous backup */ }
+        try { await rename(logPath, backup); } catch { /* race -- another process rotated */ }
+        this.stderrBytesWritten = 0;
+      }
+    } catch { /* file doesn't exist yet */ }
+  }
+
   /** LOG-04: Read child stderr and append to log file */
   private async captureStderr(proc: NonNullable<typeof this.proc>): Promise<void> {
     const stderr = proc.stderr;
@@ -124,7 +145,11 @@ export class McpTransport implements Transport {
         if (done) break;
         const text = decoder.decode(value, { stream: true });
         try {
-          appendFileSync(logPath, text);
+          this.stderrBytesWritten += Buffer.byteLength(text);
+          if (this.stderrBytesWritten > McpTransport.STDERR_MAX_SIZE) {
+            await this.rotateStderrIfNeeded(logPath);
+          }
+          await appendFile(logPath, text);
         } catch {
           // Best-effort -- don't crash if log write fails
         }

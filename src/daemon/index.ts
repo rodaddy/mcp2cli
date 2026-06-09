@@ -97,8 +97,8 @@ export async function startDaemon(): Promise<void> {
     }, 10_000);
 
     try {
-      // Stop accepting new connections
-      server.stop(true);
+      // Stop accepting new connections, drain in-flight requests
+      server.stop();
 
       // Close all MCP connections (reuses McpTransport.close() multi-step shutdown)
       await pool.closeAll();
@@ -144,5 +144,13 @@ export async function startDaemon(): Promise<void> {
   // Start first idle countdown (only if idle timer is enabled)
   if (idleTimeoutMs > 0) {
     idleTimer.touch();
+  }
+
+  // Pre-connect all services at startup when enabled
+  if (process.env.MCP2CLI_PRECONNECT === "1") {
+    const liveConfig = configManager ? configManager.getServices() : config;
+    pool.preconnectAll(liveConfig).catch((err) => {
+      log.error("preconnect_error", { error: err instanceof Error ? err.message : String(err) });
+    });
   }
 }

@@ -3,6 +3,9 @@
  * Exposes request metrics, connection pool state, and system health
  * in Prometheus text exposition format at GET /metrics.
  */
+import pkg from "../../package.json" with { type: "json" };
+
+const VERSION = pkg.version;
 
 /** Histogram bucket boundaries for request duration (ms) */
 const DURATION_BUCKETS = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000];
@@ -15,19 +18,12 @@ interface RequestMetric {
   buckets: number[];
 }
 
-interface ConnectionEvent {
-  connects: number;
-  disconnects: number;
-  healthCheckFailures: number;
-}
-
 /**
  * Centralized metrics collector.
  * Thread-safe for single-threaded Bun runtime.
  */
 export class MetricsCollector {
   private readonly requests = new Map<string, RequestMetric>();
-  private readonly connections = new Map<string, ConnectionEvent>();
   private activeRequests = 0;
   private peakActiveRequests = 0;
   private totalRequests = 0;
@@ -75,19 +71,6 @@ export class MetricsCollector {
     }
   }
 
-  /** Record a connection event */
-  onConnect(service: string): void {
-    this.getOrCreateConnection(service).connects++;
-  }
-
-  onDisconnect(service: string): void {
-    this.getOrCreateConnection(service).disconnects++;
-  }
-
-  onHealthCheckFailure(service: string): void {
-    this.getOrCreateConnection(service).healthCheckFailures++;
-  }
-
   /** Record an auth failure */
   private authFailures = 0;
   onAuthFailure(): void {
@@ -129,15 +112,6 @@ export class MetricsCollector {
     lines.push("# TYPE mcp2cli_pool_services gauge");
     for (const svc of poolServices) {
       lines.push(`mcp2cli_pool_services{service="${svc}"} 1`);
-    }
-
-    // -- Connection lifecycle metrics --
-    lines.push("# HELP mcp2cli_connection_events_total Connection lifecycle events");
-    lines.push("# TYPE mcp2cli_connection_events_total counter");
-    for (const [service, events] of this.connections) {
-      lines.push(`mcp2cli_connection_events_total{service="${service}",event="connect"} ${events.connects}`);
-      lines.push(`mcp2cli_connection_events_total{service="${service}",event="disconnect"} ${events.disconnects}`);
-      lines.push(`mcp2cli_connection_events_total{service="${service}",event="health_check_failure"} ${events.healthCheckFailures}`);
     }
 
     // -- Request metrics --
@@ -186,18 +160,10 @@ export class MetricsCollector {
     // -- Info metric --
     lines.push("# HELP mcp2cli_info Build info");
     lines.push("# TYPE mcp2cli_info gauge");
-    lines.push(`mcp2cli_info{version="0.2.0"} 1`);
+    lines.push(`mcp2cli_info{version="${VERSION}"} 1`);
 
     lines.push("");
     return lines.join("\n");
   }
 
-  private getOrCreateConnection(service: string): ConnectionEvent {
-    let entry = this.connections.get(service);
-    if (!entry) {
-      entry = { connects: 0, disconnects: 0, healthCheckFailures: 0 };
-      this.connections.set(service, entry);
-    }
-    return entry;
-  }
 }

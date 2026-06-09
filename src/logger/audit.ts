@@ -97,7 +97,7 @@ function sanitizeValue(value: unknown, depth = 0): unknown {
   return value;
 }
 
-function sanitizeParams(params: Record<string, unknown>, depth = 0): Record<string, unknown> {
+export function sanitizeParams(params: Record<string, unknown>, depth = 0): Record<string, unknown> {
   if (depth > MAX_SANITIZE_DEPTH) return { "[nested too deep]": true };
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(params)) {

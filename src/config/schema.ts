@@ -1,6 +1,16 @@
 import { z } from "zod";
 
 /**
+ * Routing source for per-service remote/local control.
+ * - "local": always use local daemon (Mac-only services)
+ * - "remote": always route to remote daemon
+ * - "remote-local": try remote first, fall back to local if unreachable
+ * When omitted, defaults to "local" (no remote URL) or "remote-local" (remote URL set).
+ */
+export const SourceSchema = z.enum(["local", "remote", "remote-local"]).optional();
+export type ServiceSource = z.infer<typeof SourceSchema>;
+
+/**
  * Tool access control fields shared by all service backends.
  * allowTools: glob patterns for tools to include (whitelist). If set, only matching tools are visible.
  * blockTools: glob patterns for tools to exclude (blacklist). Applied after allowTools.
@@ -11,6 +21,7 @@ const accessControlFields = {
   blockTools: z.array(z.string()).optional(),
   /** Per-service tool call timeout in milliseconds. Overrides MCP2CLI_TOOL_TIMEOUT env var. */
   timeout: z.number().int().positive().optional(),
+  source: SourceSchema,
 };
 
 /**
