@@ -253,10 +253,14 @@ export function createDaemonServer(opts: DaemonServerOptions) {
       // GET /health -- health check (auth-exempt)
       if (path === "/health" && req.method === "GET") {
         const mem = process.memoryUsage();
+        const currentConfig = getConfig();
+        const configuredServices = Object.keys(currentConfig.services);
+        const connectedServices = pool.serviceNames;
         return Response.json({
           status: "ok",
           uptime: process.uptime(),
-          services: pool.serviceNames,
+          configuredServices,
+          connectedServices,
           activeConnections: pool.size,
           memory: {
             rss: mem.rss,
