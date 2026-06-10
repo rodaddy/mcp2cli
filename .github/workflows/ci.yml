@@ -31,13 +31,6 @@ jobs:
       - name: Build
         run: bun build --compile src/cli/index.ts --outfile dist/mcp2cli
 
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: mcp2cli-binary
-          path: dist/mcp2cli
-          retention-days: 7
-
   deploy:
     needs: check
     runs-on: [self-hosted, rodaddy]
