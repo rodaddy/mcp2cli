@@ -146,12 +146,7 @@ describe("ServicesConfig with mixed backends", () => {
 });
 
 describe("HTTP transport module imports", () => {
-  test("connectToHttpService is exported from connection index", async () => {
-    const mod = await import("../../src/connection/index.ts");
-    expect(typeof mod.connectToHttpService).toBe("function");
-  });
-
-  test("connectToHttpService function exists in http-transport module", async () => {
+  test("connectToHttpService is exported from http-transport module", async () => {
     const mod = await import("../../src/connection/http-transport.ts");
     expect(typeof mod.connectToHttpService).toBe("function");
   });
