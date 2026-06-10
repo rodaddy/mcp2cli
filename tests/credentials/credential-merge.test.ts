@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { mergeCredentials, userPoolKey } from "../../src/daemon/credential-merge.ts";
+import { mergeCredentials, userPoolKey, applyCallerTemplates } from "../../src/daemon/credential-merge.ts";
+import type { CallerContext } from "../../src/daemon/credential-merge.ts";
 import type { ServiceConfig } from "../../src/config/index.ts";
 import type { ServiceCredential } from "../../src/credentials/index.ts";
 
@@ -142,6 +143,102 @@ describe("mergeCredentials", () => {
       "X-Base": "1",
       Authorization: "Bearer ws-key",
     });
+  });
+});
+
+describe("caller template expansion", () => {
+  const caller: CallerContext = { id: "bilby", role: "agent" };
+
+  test("expands ${caller.id} in merged headers", () => {
+    const service: ServiceConfig = {
+      backend: "http",
+      url: "http://localhost:3100/mcp",
+      headers: { "X-Base": "static" },
+    };
+    const cred: ServiceCredential = {
+      headers: { "X-Agent-Id": "${caller.id}", "X-Role": "${caller.role}" },
+    };
+    const result = mergeCredentials(service, cred, caller);
+    const headers = (result as { headers: Record<string, string> }).headers;
+    expect(headers["X-Agent-Id"]).toBe("bilby");
+    expect(headers["X-Role"]).toBe("agent");
+    expect(headers["X-Base"]).toBe("static");
+  });
+
+  test("expands templates in service config headers via applyCallerTemplates", () => {
+    const service: ServiceConfig = {
+      backend: "http",
+      url: "http://localhost:3100/mcp",
+      headers: {
+        Authorization: "Bearer static-key",
+        "X-Namespace": "${caller.id}",
+      },
+    };
+    const result = applyCallerTemplates(service, caller);
+    const headers = (result as { headers: Record<string, string> }).headers;
+    expect(headers["X-Namespace"]).toBe("bilby");
+    expect(headers.Authorization).toBe("Bearer static-key");
+  });
+
+  test("expands ${caller.id} in stdio env", () => {
+    const service: ServiceConfig = {
+      backend: "stdio",
+      command: "node",
+      args: ["server.js"],
+      env: { NAMESPACE: "${caller.id}", STATIC: "keep" },
+    };
+    const cred: ServiceCredential = {
+      env: { AGENT_ROLE: "${caller.role}" },
+    };
+    const result = mergeCredentials(service, cred, caller);
+    const env = (result as { env: Record<string, string> }).env;
+    expect(env.NAMESPACE).toBe("bilby");
+    expect(env.AGENT_ROLE).toBe("agent");
+    expect(env.STATIC).toBe("keep");
+  });
+
+  test("leaves unknown template variables unexpanded", () => {
+    const service: ServiceConfig = {
+      backend: "http",
+      url: "http://localhost:3100/mcp",
+      headers: { "X-Unknown": "${caller.email}" },
+    };
+    const result = applyCallerTemplates(service, caller);
+    const headers = (result as { headers: Record<string, string> }).headers;
+    expect(headers["X-Unknown"]).toBe("${caller.email}");
+  });
+
+  test("does not expand templates when no caller context", () => {
+    const service: ServiceConfig = {
+      backend: "http",
+      url: "http://localhost:3100/mcp",
+      headers: { "X-Agent-Id": "${caller.id}" },
+    };
+    const cred: ServiceCredential = { headers: {} };
+    const result = mergeCredentials(service, cred);
+    const headers = (result as { headers: Record<string, string> }).headers;
+    expect(headers["X-Agent-Id"]).toBe("${caller.id}");
+  });
+
+  test("handles multiple templates in one value", () => {
+    const service: ServiceConfig = {
+      backend: "http",
+      url: "http://localhost:3100/mcp",
+      headers: { "X-Info": "${caller.id}:${caller.role}" },
+    };
+    const result = applyCallerTemplates(service, caller);
+    const headers = (result as { headers: Record<string, string> }).headers;
+    expect(headers["X-Info"]).toBe("bilby:agent");
+  });
+
+  test("does not mutate original config", () => {
+    const service: ServiceConfig = {
+      backend: "http",
+      url: "http://localhost:3100/mcp",
+      headers: { "X-Agent-Id": "${caller.id}" },
+    };
+    applyCallerTemplates(service, caller);
+    expect((service as { headers: Record<string, string> }).headers["X-Agent-Id"]).toBe("${caller.id}");
   });
 });
 

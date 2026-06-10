@@ -417,6 +417,48 @@ Open Brain (OBv2) is an HTTP MCP service. With credential management, each user 
 
 Now when rico calls `mcp2cli open-brain search_all --params '{"query": "kubernetes"}'`, his personal key is injected. When skippy calls the same tool, the agents' shared key is used. Each gets their own connection in the pool.
 
+### Caller Identity Headers
+
+Header and env values support `${caller.id}` and `${caller.role}` template variables. These are replaced with the authenticated caller's identity at call time.
+
+**In services.json** -- inject identity headers for all callers without needing credentials.json:
+```json
+{
+  "services": {
+    "open-brain": {
+      "backend": "http",
+      "url": "http://10.71.20.49:3100/mcp",
+      "headers": {
+        "Authorization": "Bearer shared-ob-key",
+        "X-Agent-Id": "${caller.id}",
+        "X-Namespace": "${caller.id}",
+        "X-Role": "${caller.role}"
+      }
+    }
+  }
+}
+```
+
+When bilby calls open-brain, the request headers become `X-Agent-Id: bilby`, `X-Namespace: bilby`, `X-Role: agent`. The downstream service (Open Brain) can use these to route to the correct namespace.
+
+**In credentials.json** -- combine per-identity keys with identity headers:
+```json
+{
+  "credentials": {
+    "rico": {
+      "open-brain": {
+        "headers": {
+          "Authorization": "Bearer ricos-ob-key",
+          "X-Namespace": "${caller.id}"
+        }
+      }
+    }
+  }
+}
+```
+
+Templates work in both headers and env values. Unknown variables (e.g., `${caller.email}`) are left unexpanded.
+
 ### Security
 
 - **Redacted list output** -- `GET /api/credentials` returns `Bear***` not full values
