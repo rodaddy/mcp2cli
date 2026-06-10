@@ -1,0 +1,105 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [Version Bump]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  BUN_VERSION: "1.3.13"
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, rodaddy]
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    env:
+      DEPLOY_HOST: 10.71.20.63
+      DEPLOY_USER: rico
+      SERVICE_NAME: mcp2cli
+      BINARY_PATH: /usr/local/bin/mcp2cli
+      HEALTH_URL: http://10.71.20.63:9500/health
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install and build for Linux x64
+        run: |
+          bun install --frozen-lockfile
+          bun build --compile --target=bun-linux-x64 src/cli/index.ts --outfile dist/mcp2cli
+
+      - name: Show version being deployed
+        run: |
+          echo "Deploying version: $(cat VERSION)"
+
+      - name: Backup current binary
+        run: |
+          ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+            "sudo cp ${{ env.BINARY_PATH }} ${{ env.BINARY_PATH }}.bak 2>/dev/null || true"
+
+      - name: Deploy new binary
+        run: |
+          scp dist/mcp2cli ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/mcp2cli-new
+          ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+            "sudo mv /tmp/mcp2cli-new ${{ env.BINARY_PATH }} && \
+             sudo chmod +x ${{ env.BINARY_PATH }} && \
+             sudo chown mcp2cli:mcp2cli ${{ env.BINARY_PATH }}"
+
+      - name: Restart service
+        run: |
+          ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+            "sudo systemctl restart ${{ env.SERVICE_NAME }}"
+
+      - name: Health check (with retry)
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            sleep 5
+            if curl -sf --max-time 5 ${{ env.HEALTH_URL }} > /dev/null 2>&1; then
+              echo "Health check passed (attempt $i)"
+              curl -sf ${{ env.HEALTH_URL }} | jq '{version, activeConnections, configuredServices}'
+              exit 0
+            fi
+            echo "Health check attempt $i failed, retrying..."
+          done
+          echo "Health check failed after 8 attempts"
+          exit 1
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "Deployment failed -- rolling back to previous binary"
+          ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+            "if [ -f ${{ env.BINARY_PATH }}.bak ]; then \
+               sudo mv ${{ env.BINARY_PATH }}.bak ${{ env.BINARY_PATH }} && \
+               sudo systemctl restart ${{ env.SERVICE_NAME }} && \
+               echo 'Rollback complete'; \
+             else \
+               echo 'No backup found -- manual intervention required'; \
+               exit 1; \
+             fi"
+
+      - name: Verify rollback health
+        if: failure()
+        run: |
+          sleep 5
+          if curl -sf --max-time 5 ${{ env.HEALTH_URL }} > /dev/null 2>&1; then
+            echo "Rollback health check passed -- service restored"
+          else
+            echo "WARNING: Rollback health check failed -- service may be down"
+            exit 1
+          fi
+
+      - name: Clean up backup
+        if: success()
+        run: |
+          ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+            "sudo rm -f ${{ env.BINARY_PATH }}.bak"
