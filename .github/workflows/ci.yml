@@ -35,6 +35,8 @@ jobs:
     needs: check
     runs-on: [self-hosted, rodaddy]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
