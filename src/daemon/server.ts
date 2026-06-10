@@ -29,7 +29,8 @@ import type { AuthProvider, AuthContext } from "./auth-provider.ts";
 import type { MetricsCollector } from "./metrics.ts";
 import { ConfigManager, ConfigManagerError } from "./config-manager.ts";
 import type { CredentialManager } from "../credentials/index.ts";
-import { mergeCredentials, userPoolKey } from "./credential-merge.ts";
+import { mergeCredentials, userPoolKey, applyCallerTemplates } from "./credential-merge.ts";
+import type { CallerContext } from "./credential-merge.ts";
 import { handleCredentialRoutes } from "./routes/credentials.ts";
 import { renderUI } from "./ui.ts";
 import pkg from "../../package.json" with { type: "json" };
@@ -79,18 +80,43 @@ export function createDaemonServer(opts: DaemonServerOptions) {
     authContext: AuthContext | null,
     currentConfig: ServicesConfig,
   ): { poolKey: string; serviceConfigOverride?: import("../config/index.ts").ServiceConfig } {
-    if (!cm || !authContext) return { poolKey: service };
-    const resolved = cm.resolveWithSource(authContext.userId, service);
-    if (!resolved) return { poolKey: service };
+    const caller: CallerContext | undefined = authContext
+      ? { id: authContext.userId, role: authContext.role }
+      : undefined;
     const baseCfg = currentConfig.services[service];
-    if (!baseCfg) return { poolKey: service };
-    const poolKey = resolved.source === "default"
-      ? service
-      : userPoolKey(service, `${resolved.source}:${resolved.identity}`);
-    return {
-      poolKey,
-      serviceConfigOverride: mergeCredentials(baseCfg, resolved.credential),
-    };
+
+    if (cm && authContext) {
+      const resolved = cm.resolveWithSource(authContext.userId, service);
+      if (resolved && baseCfg) {
+        const poolKey = resolved.source === "default"
+          ? service
+          : userPoolKey(service, `${resolved.source}:${resolved.identity}`);
+        return {
+          poolKey,
+          serviceConfigOverride: mergeCredentials(baseCfg, resolved.credential, caller),
+        };
+      }
+    }
+
+    if (caller && baseCfg && hasCallerTemplates(baseCfg)) {
+      return {
+        poolKey: userPoolKey(service, authContext!.userId),
+        serviceConfigOverride: applyCallerTemplates(baseCfg, caller),
+      };
+    }
+
+    return { poolKey: service };
+  }
+
+  function hasCallerTemplates(config: import("../config/index.ts").ServiceConfig): boolean {
+    const check = (val: string) => val.includes("${caller.");
+    if ("headers" in config && config.headers) {
+      if (Object.values(config.headers).some(check)) return true;
+    }
+    if ("env" in config && config.env) {
+      if (Object.values(config.env).some(check)) return true;
+    }
+    return false;
   }
 
   // Build listen options based on mode
