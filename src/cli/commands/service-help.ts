@@ -3,7 +3,8 @@
  * Routes through daemon by default. Set MCP2CLI_NO_DAEMON=1 for direct connection.
  */
 import { loadConfig } from "../../config/index.ts";
-import { connectToService, connectToHttpService } from "../../connection/index.ts";
+import { connectToService } from "../../connection/index.ts";
+import { connectToHttpService } from "../../connection/http-transport.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { listToolsViaDaemon } from "../../process/index.ts";
 import { listToolsCached, formatToolListing } from "../../schema/index.ts";

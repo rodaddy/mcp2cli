@@ -4,7 +4,8 @@
  * MEM-04: Bounded pool size (default 50, configurable via MCP2CLI_POOL_MAX).
  * MEM-05: Health check before reuse -- stale connections are replaced.
  */
-import { connectToService, connectToHttpService } from "../connection/index.ts";
+import { connectToService } from "../connection/index.ts";
+import { connectToHttpService } from "../connection/http-transport.ts";
 import { connectToWebSocketService } from "../connection/websocket-transport.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import type { McpConnection } from "../connection/types.ts";
