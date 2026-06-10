@@ -17,7 +17,7 @@ const AUTH_EXEMPT_PATHS = new Set(["/health", "/metrics", "/", "/api/auth/login"
  * @deprecated Use TokenAuthProvider.load() for multi-user support.
  */
 export function loadAuthToken(): string | undefined {
-  return process.env.MCP2CLI_AUTH_TOKEN || undefined;
+  return process.env.MCP2CLI_AUTH_TOKEN || process.env.MCP_TOKEN || undefined;
 }
 
 /**

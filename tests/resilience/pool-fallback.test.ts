@@ -29,8 +29,11 @@ const mockConnectToHttpService = mock(async () => mockHttpConnection);
 const mockConnectToService = mock(async () => mockStdioConnection);
 
 mock.module("../../src/connection/index.ts", () => ({
-  connectToHttpService: mockConnectToHttpService,
   connectToService: mockConnectToService,
+}));
+
+mock.module("../../src/connection/http-transport.ts", () => ({
+  connectToHttpService: mockConnectToHttpService,
 }));
 
 // Import pool AFTER mocking

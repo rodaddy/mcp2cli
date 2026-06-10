@@ -4,7 +4,8 @@
  */
 import { clearCache, listCachedServices, readCacheRaw, detectDrift, resolveTtlMs, writeCache, mapToolsToCachedSchemas } from "../../cache/index.ts";
 import { loadConfig } from "../../config/index.ts";
-import { connectToService, connectToHttpService } from "../../connection/index.ts";
+import { connectToService } from "../../connection/index.ts";
+import { connectToHttpService } from "../../connection/http-transport.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { listAllTools } from "../../schema/introspect.ts";
 import { EXIT_CODES } from "../../types/index.ts";

@@ -17,6 +17,9 @@ const mockConnectToService = mock(async () => {
 // Apply the mock to the connection module
 mock.module("../../src/connection/index.ts", () => ({
   connectToService: mockConnectToService,
+}));
+
+mock.module("../../src/connection/http-transport.ts", () => ({
   connectToHttpService: mockConnectToService,
 }));
 

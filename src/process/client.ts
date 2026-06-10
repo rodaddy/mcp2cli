@@ -42,8 +42,8 @@ async function getLocalToken(): Promise<string | undefined> {
 
   // Only use MCP2CLI_AUTH_TOKEN for local auth when no remote URL is set,
   // otherwise the token belongs to the remote daemon
-  const envToken = process.env.MCP2CLI_AUTH_TOKEN;
-  if (envToken && !process.env.MCP2CLI_REMOTE_URL) {
+  const envToken = process.env.MCP2CLI_AUTH_TOKEN ?? process.env.MCP_TOKEN;
+  if (envToken && !process.env.MCP2CLI_REMOTE_URL && !process.env.MCP_HOST) {
     cachedLocalToken = envToken;
     return cachedLocalToken;
   }

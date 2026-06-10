@@ -44,9 +44,9 @@ export function getDaemonListenConfig(): DaemonListenConfig {
  * Returns null if MCP2CLI_REMOTE_URL is not set.
  */
 export function getRemoteConfig(): { url: string; token: string | undefined } | null {
-  const url = process.env.MCP2CLI_REMOTE_URL;
+  const url = process.env.MCP2CLI_REMOTE_URL ?? process.env.MCP_HOST;
   if (!url) return null;
-  return { url, token: process.env.MCP2CLI_AUTH_TOKEN };
+  return { url, token: process.env.MCP2CLI_AUTH_TOKEN ?? process.env.MCP_TOKEN };
 }
 
 export function getDaemonPaths(overrides?: {
