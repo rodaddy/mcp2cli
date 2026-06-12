@@ -1,120 +1,121 @@
 /**
  * MEM-02: Tool call timeout tests.
- * Tests that tool calls exceeding MCP2CLI_TOOL_TIMEOUT return structured TOOL_TIMEOUT errors.
- *
- * Integration test: exercises the full CLI -> daemon -> slow-mcp-server path.
+ * Exercises the daemon /call path against a slow MCP fixture without relying on
+ * CLI-managed daemon startup timing.
  */
-import { describe, test, expect, afterEach, beforeEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolve } from "path";
-
-const PROJECT_ROOT = resolve(import.meta.dir, "../..");
-
-interface CliResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+import { join } from "node:path";
+import { createDaemonServer } from "../../src/daemon/server.ts";
+import { ConnectionPool } from "../../src/daemon/pool.ts";
+import { IdleTimer } from "../../src/daemon/idle.ts";
+import { TokenAuthProvider } from "../../src/daemon/auth-provider.ts";
+import { MetricsCollector } from "../../src/daemon/metrics.ts";
+import type { ServicesConfig } from "../../src/config/index.ts";
 
 let tempDir: string;
+let pool: ConnectionPool;
+let server: ReturnType<typeof createDaemonServer>;
 
-function runCli(
-  args: string[],
-  extraEnv?: Record<string, string>,
-  timeoutMs = 30_000,
-): CliResult {
-  const configPath = join(tempDir, "config.json");
-
-  const env: Record<string, string> = {
-    ...(process.env as Record<string, string>),
-    MCP2CLI_CONFIG: configPath,
-    MCP2CLI_PID_FILE: join(tempDir, "daemon.pid"),
-    MCP2CLI_SOCKET_PATH: join(tempDir, "daemon.sock"),
-    MCP2CLI_IDLE_TIMEOUT: "10",
-    MCP2CLI_CACHE_DIR: join(tempDir, "schemas"),
-    MCP2CLI_TOKENS_FILE: join(tempDir, "nonexistent-tokens.json"),
-    MCP2CLI_AUTH_TOKEN: "",
-    ...extraEnv,
-  };
-
-  const proc = Bun.spawnSync(
-    ["bun", "run", "src/cli/index.ts", ...args],
-    {
-      cwd: PROJECT_ROOT,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: timeoutMs,
-    },
-  );
-
+function makeConfig(): ServicesConfig {
   return {
-    stdout: proc.stdout.toString().trim(),
-    stderr: proc.stderr.toString().trim(),
-    exitCode: proc.exitCode,
+    services: {
+      slowOk: {
+        backend: "stdio",
+        command: "fake",
+        args: [],
+        env: {},
+        timeout: 30_000,
+      },
+      slowTimeout: {
+        backend: "stdio",
+        command: "fake",
+        args: [],
+        env: {},
+        timeout: 500,
+      },
+    },
   };
 }
 
-function shutdownDaemon() {
-  try {
-    runCli(["shutdown"], undefined, 5000);
-  } catch {
-    // May not be running
+class FakePool {
+  async getConnection() {
+    return {
+      client: {
+        async callTool(request: { arguments?: { delay_ms?: number } }) {
+          const delay = request.arguments?.delay_ms ?? 0;
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ status: "ok", delayed: delay }),
+              },
+            ],
+          };
+        },
+      },
+    };
   }
+
+  async closeAll() {}
+}
+
+async function callTool(service: string, delayMs: number): Promise<unknown> {
+  const response = await server.fetch(
+    new Request("http://localhost/call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service,
+        tool: "slow_tool",
+        params: { delay_ms: delayMs },
+      }),
+    }),
+  );
+
+  return response.json();
 }
 
 describe("MEM-02: Tool call timeout", () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "mcp2cli-timeout-"));
-    const slowServer = resolve(PROJECT_ROOT, "tests/fixtures/slow-mcp-server.ts");
-
-    const config = {
-      services: {
-        slow: {
-          backend: "stdio",
-          command: "bun",
-          args: [slowServer],
-        },
-      },
-    };
-    await Bun.write(join(tempDir, "config.json"), JSON.stringify(config));
+    const config = makeConfig();
+    pool = new FakePool() as unknown as ConnectionPool;
+    server = createDaemonServer({
+      listenConfig: { mode: "unix", socketPath: join(tempDir, "daemon.sock") },
+      pool,
+      config,
+      idleTimer: new IdleTimer(60_000, () => {}),
+      onShutdown: () => {},
+      authProvider: new TokenAuthProvider([]),
+      metrics: new MetricsCollector(),
+    });
   });
 
   afterEach(async () => {
-    shutdownDaemon();
-    await new Promise((r) => setTimeout(r, 500));
-    if (tempDir) {
-      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
-    }
+    server.stop(true);
+    await pool.closeAll();
+    await rm(tempDir, { recursive: true, force: true });
   });
 
   test("tool call within timeout succeeds normally", async () => {
-    // Use --params JSON format (the CLI's supported param syntax)
-    const result = runCli(
-      ["slow", "slow_tool", "--params", '{"delay_ms":100}'],
-      { MCP2CLI_TOOL_TIMEOUT: "30000" },
-    );
+    const parsed = await callTool("slowOk", 10) as { success?: boolean; result?: { delayed?: number } };
 
-    const parsed = JSON.parse(result.stdout);
     expect(parsed.success).toBe(true);
-    expect(parsed.result.delayed).toBe(100);
-  }, 30_000);
+    expect(parsed.result?.delayed).toBe(10);
+  });
 
   test("tool call exceeding timeout returns TOOL_TIMEOUT error", async () => {
-    // Use very short timeout (500ms) with long delay (60s)
-    const result = runCli(
-      ["slow", "slow_tool", "--params", '{"delay_ms":60000}'],
-      { MCP2CLI_TOOL_TIMEOUT: "500" },
-    );
+    const parsed = await callTool("slowTimeout", 2_000) as {
+      success?: boolean;
+      error?: { code?: string; message?: string };
+    };
 
-    // Should fail with TOOL_TIMEOUT
-    expect(result.exitCode).not.toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.error).toBe(true);
-    expect(parsed.code).toBe("TOOL_TIMEOUT");
-    expect(parsed.message).toContain("timed out");
-    expect(parsed.message).toContain("500ms");
-  }, 30_000);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.code).toBe("TOOL_TIMEOUT");
+    expect(parsed.error?.message).toContain("timed out");
+    expect(parsed.error?.message).toContain("500ms");
+  });
 });

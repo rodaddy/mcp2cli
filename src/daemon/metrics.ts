@@ -18,12 +18,28 @@ interface RequestMetric {
   buckets: number[];
 }
 
+export interface UserMetricSummary {
+  userId: string;
+  totalRequests: number;
+  errorCount: number;
+  totalDurationMs: number;
+  requests: Array<{
+    service: string;
+    tool: string;
+    count: number;
+    errorCount: number;
+    totalDurationMs: number;
+    avgDurationMs: number;
+  }>;
+}
+
 /**
  * Centralized metrics collector.
  * Thread-safe for single-threaded Bun runtime.
  */
 export class MetricsCollector {
   private readonly requests = new Map<string, RequestMetric>();
+  private readonly callerRequests = new Map<string, RequestMetric>();
   private activeRequests = 0;
   private peakActiveRequests = 0;
   private totalRequests = 0;
@@ -43,20 +59,60 @@ export class MetricsCollector {
     tool: string,
     success: boolean,
     durationMs: number,
+    caller?: string,
   ): void {
     this.activeRequests = Math.max(0, this.activeRequests - 1);
     this.totalRequests++;
 
-    const key = `${service}.${tool}`;
-    let metric = this.requests.get(key);
+    this.recordMetric(this.requests, metricKey(service, tool), success, durationMs);
+    if (caller) {
+      this.recordMetric(this.callerRequests, metricKey(service, tool, caller), success, durationMs);
+    }
+  }
+
+  getUserBreakdown(userId: string): UserMetricSummary {
+    const requests: UserMetricSummary["requests"] = [];
+    let totalRequests = 0;
+    let errorCount = 0;
+    let totalDurationMs = 0;
+
+    for (const [key, metric] of this.callerRequests) {
+      const parsed = parseMetricKey(key);
+      if (!parsed.caller || parsed.caller !== userId) continue;
+      totalRequests += metric.count;
+      errorCount += metric.errorCount;
+      totalDurationMs += metric.totalDurationMs;
+      requests.push({
+        service: parsed.service,
+        tool: parsed.tool,
+        count: metric.count,
+        errorCount: metric.errorCount,
+        totalDurationMs: metric.totalDurationMs,
+        avgDurationMs: metric.count === 0 ? 0 : Math.round(metric.totalDurationMs / metric.count),
+      });
+    }
+
+    requests.sort((a, b) => b.count - a.count || a.service.localeCompare(b.service) || a.tool.localeCompare(b.tool));
+
+    return {
+      userId,
+      totalRequests,
+      errorCount,
+      totalDurationMs,
+      requests,
+    };
+  }
+
+  private recordMetric(
+    map: Map<string, RequestMetric>,
+    key: string,
+    success: boolean,
+    durationMs: number,
+  ): void {
+    let metric = map.get(key);
     if (!metric) {
-      metric = {
-        count: 0,
-        errorCount: 0,
-        totalDurationMs: 0,
-        buckets: new Array(DURATION_BUCKETS.length).fill(0) as number[],
-      };
-      this.requests.set(key, metric);
+      metric = newMetric();
+      map.set(key, metric);
     }
 
     metric.count++;
@@ -82,7 +138,11 @@ export class MetricsCollector {
    * @param poolSize Current connection pool size
    * @param poolServices List of connected service names
    */
-  render(poolSize: number, poolServices: string[]): string {
+  render(
+    poolSize: number,
+    poolServices: string[],
+    opts: { includeCallerMetrics?: boolean } = {},
+  ): string {
     const lines: string[] = [];
 
     // -- Process metrics --
@@ -131,25 +191,47 @@ export class MetricsCollector {
     lines.push("# TYPE mcp2cli_requests_duration_ms_sum counter");
 
     for (const [key, metric] of this.requests) {
-      const [service, tool] = key.split(".", 2);
-      const labels = `service="${service}",tool="${tool}"`;
+      const { service, tool } = parseMetricKey(key);
+      const labels = `service="${escapeLabelValue(service)}",tool="${escapeLabelValue(tool)}"`;
       lines.push(`mcp2cli_requests_total{${labels}} ${metric.count}`);
       lines.push(`mcp2cli_requests_errors_total{${labels}} ${metric.errorCount}`);
       lines.push(`mcp2cli_requests_duration_ms_sum{${labels}} ${metric.totalDurationMs.toFixed(0)}`);
+    }
+
+    if (opts.includeCallerMetrics) {
+      for (const [key, metric] of this.callerRequests) {
+        const { service, tool, caller } = parseMetricKey(key);
+        const labels = `service="${escapeLabelValue(service)}",tool="${escapeLabelValue(tool)}",caller="${escapeLabelValue(caller ?? "unknown")}"`;
+        lines.push(`mcp2cli_requests_total{${labels}} ${metric.count}`);
+        lines.push(`mcp2cli_requests_errors_total{${labels}} ${metric.errorCount}`);
+        lines.push(`mcp2cli_requests_duration_ms_sum{${labels}} ${metric.totalDurationMs.toFixed(0)}`);
+      }
     }
 
     // -- Request duration histogram --
     lines.push("# HELP mcp2cli_request_duration_ms Request duration histogram");
     lines.push("# TYPE mcp2cli_request_duration_ms histogram");
     for (const [key, metric] of this.requests) {
-      const [service, tool] = key.split(".", 2);
-      const labels = `service="${service}",tool="${tool}"`;
+      const { service, tool } = parseMetricKey(key);
+      const labels = `service="${escapeLabelValue(service)}",tool="${escapeLabelValue(tool)}"`;
       for (let i = 0; i < DURATION_BUCKETS.length; i++) {
         lines.push(`mcp2cli_request_duration_ms_bucket{${labels},le="${DURATION_BUCKETS[i]}"} ${metric.buckets[i]}`);
       }
       lines.push(`mcp2cli_request_duration_ms_bucket{${labels},le="+Inf"} ${metric.count}`);
       lines.push(`mcp2cli_request_duration_ms_count{${labels}} ${metric.count}`);
       lines.push(`mcp2cli_request_duration_ms_sum{${labels}} ${metric.totalDurationMs.toFixed(0)}`);
+    }
+    if (opts.includeCallerMetrics) {
+      for (const [key, metric] of this.callerRequests) {
+        const { service, tool, caller } = parseMetricKey(key);
+        const labels = `service="${escapeLabelValue(service)}",tool="${escapeLabelValue(tool)}",caller="${escapeLabelValue(caller ?? "unknown")}"`;
+        for (let i = 0; i < DURATION_BUCKETS.length; i++) {
+          lines.push(`mcp2cli_request_duration_ms_bucket{${labels},le="${DURATION_BUCKETS[i]}"} ${metric.buckets[i]}`);
+        }
+        lines.push(`mcp2cli_request_duration_ms_bucket{${labels},le="+Inf"} ${metric.count}`);
+        lines.push(`mcp2cli_request_duration_ms_count{${labels}} ${metric.count}`);
+        lines.push(`mcp2cli_request_duration_ms_sum{${labels}} ${metric.totalDurationMs.toFixed(0)}`);
+      }
     }
 
     // -- Auth metrics --
@@ -166,4 +248,26 @@ export class MetricsCollector {
     return lines.join("\n");
   }
 
+}
+
+function newMetric(): RequestMetric {
+  return {
+    count: 0,
+    errorCount: 0,
+    totalDurationMs: 0,
+    buckets: new Array(DURATION_BUCKETS.length).fill(0) as number[],
+  };
+}
+
+function metricKey(service: string, tool: string, caller?: string): string {
+  return JSON.stringify(caller ? [service, tool, caller] : [service, tool]);
+}
+
+function parseMetricKey(key: string): { service: string; tool: string; caller?: string } {
+  const parsed = JSON.parse(key) as [string, string, string?];
+  return { service: parsed[0], tool: parsed[1], caller: parsed[2] };
+}
+
+function escapeLabelValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/"/g, '\\"');
 }

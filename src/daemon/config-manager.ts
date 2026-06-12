@@ -21,6 +21,10 @@ export class ConfigManager {
     this.configPath = configPath ?? getConfigPath();
   }
 
+  get configFilePath(): string {
+    return this.configPath;
+  }
+
   /** Attach pool reference for connection lifecycle management. */
   setPool(pool: ConnectionPool): void {
     this.pool = pool;
@@ -29,6 +33,11 @@ export class ConfigManager {
   /** Get current services config (read-only snapshot). */
   getServices(): ServicesConfig {
     return structuredClone(this.config);
+  }
+
+  /** Get a sanitized services config safe for client import/export. */
+  getSanitizedServices(): ServicesConfig {
+    return sanitizeServicesConfig(this.config);
   }
 
   /** Get a single service config by name, or null if not found. */
@@ -247,4 +256,84 @@ export class ConfigManagerError extends Error {
     super(message);
     this.name = "ConfigManagerError";
   }
+}
+
+export function sanitizeServicesConfig(config: ServicesConfig): ServicesConfig {
+  const sanitized: ServicesConfig = { services: structuredClone(config.services) };
+
+  for (const svc of Object.values(sanitized.services)) {
+    svc.source = "remote";
+    if ("url" in svc) {
+      svc.url = sanitizeUrl(svc.url);
+    }
+    if ("args" in svc && svc.args) {
+      svc.args = sanitizeArgs(svc.args);
+    }
+    if ("headers" in svc) {
+      svc.headers = {};
+    }
+    if ("env" in svc) {
+      svc.env = {};
+    }
+    if ("fallback" in svc && svc.fallback) {
+      if ("args" in svc.fallback && svc.fallback.args) {
+        svc.fallback.args = sanitizeArgs(svc.fallback.args);
+      }
+      if ("env" in svc.fallback) {
+        svc.fallback.env = {};
+      }
+    }
+  }
+
+  return sanitized;
+}
+
+const SENSITIVE_ARG_PATTERN = /token|secret|password|api[_-]?key|auth|bearer|credential|private[_-]?key|access[_-]?key|session[_-]?id|cookie|passphrase/i;
+const SENSITIVE_ARG_VALUE_PATTERN = /(?:authorization|cookie|set-cookie|x-api-key|api[_-]?key|token|bearer|password|secret|session[_-]?id)\s*[:=]\s*\S+|bearer\s+\S+/i;
+const HEADER_ARG_VALUE_PATTERN = /(?:authorization|cookie|set-cookie|x-api-key)\s*:/i;
+
+function sanitizeUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return raw;
+  }
+}
+
+function sanitizeArgs(args: string[]): string[] {
+  const sanitized: string[] = [];
+  let redactNext = false;
+  for (const arg of args) {
+    if (redactNext) {
+      sanitized.push("[REDACTED]");
+      redactNext = false;
+      continue;
+    }
+    if (HEADER_ARG_VALUE_PATTERN.test(arg) || /\bbearer\s+\S+/i.test(arg)) {
+      sanitized.push("[REDACTED]");
+      continue;
+    }
+    if (SENSITIVE_ARG_PATTERN.test(arg)) {
+      if (arg.includes("=")) {
+        sanitized.push(arg.replace(/=.*/, "=[REDACTED]"));
+      } else if (SENSITIVE_ARG_VALUE_PATTERN.test(arg)) {
+        sanitized.push("[REDACTED]");
+      } else {
+        sanitized.push(arg);
+        redactNext = true;
+      }
+      continue;
+    }
+    if (SENSITIVE_ARG_VALUE_PATTERN.test(arg)) {
+      sanitized.push("[REDACTED]");
+      continue;
+    }
+    sanitized.push(sanitizeUrl(arg));
+  }
+  return sanitized;
 }

@@ -10,6 +10,7 @@ import { constants } from "node:fs";
 import { getDaemonPaths, getRemoteConfig } from "../daemon/paths.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { getDaemonStatus, cleanStaleDaemon } from "./liveness.ts";
+import { getRemoteServiceAvailability } from "./remote-discovery.ts";
 import type { ServiceSource, ServicesConfig } from "../config/index.ts";
 import type { DaemonPaths } from "../daemon/types.ts";
 import type {
@@ -19,7 +20,12 @@ import type {
   DaemonResponse,
 } from "../daemon/types.ts";
 
-const STARTUP_TIMEOUT_MS = 10_000;
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const parsed = parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const STARTUP_TIMEOUT_MS = readPositiveIntEnv("MCP2CLI_STARTUP_TIMEOUT", 10_000);
 const STARTUP_POLL_MS = 50;
 const REQUEST_TIMEOUT_MS = 60_000;
 const REMOTE_CONNECT_TIMEOUT_MS = 10_000;
@@ -27,6 +33,7 @@ const STALE_LOCK_THRESHOLD_MS = 30_000;
 
 /** Cached local token to avoid re-reading tokens.json on every request. */
 let cachedLocalToken: string | undefined;
+let cachedLocalTokenExpiresAt: string | undefined;
 let localTokenResolved = false;
 
 /**
@@ -45,6 +52,7 @@ async function getLocalToken(): Promise<string | undefined> {
   const envToken = process.env.MCP2CLI_AUTH_TOKEN ?? process.env.MCP_TOKEN;
   if (envToken && !process.env.MCP2CLI_REMOTE_URL && !process.env.MCP_HOST) {
     cachedLocalToken = envToken;
+    cachedLocalTokenExpiresAt = undefined;
     return cachedLocalToken;
   }
 
@@ -54,15 +62,80 @@ async function getLocalToken(): Promise<string | undefined> {
   try {
     const file = Bun.file(tokensPath);
     if (await file.exists()) {
-      const raw = await file.json() as { tokens?: Array<{ token: string; role: string }> };
-      // Use the first admin token for local socket auth
-      const adminEntry = raw.tokens?.find((t) => t.role === "admin");
+      const raw = await file.json() as { tokens?: Array<{ token: string; role: string; expiresAt?: string }> };
+      // Use the first non-expired admin token for local socket auth.
+      const adminEntry = raw.tokens?.find((t) => t.role === "admin" && !isExpiredToken(t.expiresAt));
       cachedLocalToken = adminEntry?.token;
+      cachedLocalTokenExpiresAt = adminEntry?.expiresAt;
     }
   } catch {
     // tokens.json missing or malformed -- auth may be disabled
   }
   return cachedLocalToken;
+}
+
+function isExpiredToken(expiresAt: string | undefined): boolean {
+  if (!expiresAt) return false;
+  const expiresAtMs = Date.parse(expiresAt);
+  return Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now();
+}
+
+async function buildLocalHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const localToken = await getLocalToken();
+  if (localToken) {
+    headers["Authorization"] = `Bearer ${localToken}`;
+  }
+  return headers;
+}
+
+async function refreshLocalToken(paths: DaemonPaths, token: string): Promise<boolean> {
+  const response = await fetch("http://localhost/api/auth/refresh", {
+    unix: paths.socketPath,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  }).catch(() => null);
+  if (!response?.ok) {
+    return reloadLocalTokenIfChanged(token);
+  }
+  const body = await response.json().catch(() => null) as { token?: unknown; expiresAt?: unknown } | null;
+  if (typeof body?.token !== "string") return reloadLocalTokenIfChanged(token);
+  cachedLocalToken = body.token;
+  cachedLocalTokenExpiresAt = typeof body.expiresAt === "string" ? body.expiresAt : undefined;
+  localTokenResolved = true;
+  return true;
+}
+
+async function reloadLocalTokenIfChanged(previousToken: string): Promise<boolean> {
+  clearLocalTokenCache();
+  const latestToken = await getLocalToken();
+  return latestToken !== undefined && latestToken !== previousToken;
+}
+
+async function refreshLocalTokenIfNearExpiry(paths: DaemonPaths): Promise<void> {
+  const token = await getLocalToken();
+  if (!token || !cachedLocalTokenExpiresAt) return;
+  const expiresAtMs = Date.parse(cachedLocalTokenExpiresAt);
+  if (Number.isNaN(expiresAtMs)) return;
+  const refreshWindowMs = parseInt(process.env.MCP2CLI_TOKEN_REFRESH_WINDOW_MS ?? String(24 * 60 * 60 * 1000), 10);
+  const windowMs = Number.isFinite(refreshWindowMs) && refreshWindowMs > 0
+    ? refreshWindowMs
+    : 24 * 60 * 60 * 1000;
+  if (expiresAtMs - Date.now() <= windowMs) {
+    await refreshLocalToken(paths, token);
+  }
+}
+
+export function clearLocalTokenCache(): void {
+  cachedLocalToken = undefined;
+  cachedLocalTokenExpiresAt = undefined;
+  localTokenResolved = false;
 }
 
 /**
@@ -195,6 +268,10 @@ export async function ensureDaemon(paths: DaemonPaths): Promise<void> {
  */
 let cachedConfig: ServicesConfig | null = null;
 
+export function clearClientConfigCache(): void {
+  cachedConfig = null;
+}
+
 async function getLocalConfig(): Promise<ServicesConfig | null> {
   if (!cachedConfig) {
     try {
@@ -213,11 +290,23 @@ async function getLocalConfig(): Promise<ServicesConfig | null> {
  * - "remote-local" when MCP2CLI_REMOTE_URL is set
  * - "local" when no remote URL
  */
-async function resolveSource(serviceName: string | undefined): Promise<ServiceSource> {
+export async function resolveSource(serviceName: string | undefined): Promise<ServiceSource> {
   if (!serviceName) return undefined;
   const config = await getLocalConfig();
   const svc = config?.services[serviceName];
-  return svc?.source;
+  if (svc?.source) return svc.source;
+
+  if (svc?.platforms && svc.platforms.length > 0) {
+    if (svc.platforms.includes(process.platform)) return "local";
+    const availability = await getRemoteServiceAvailability(serviceName);
+    return availability === "hosted" ? "remote" : "local";
+  }
+
+  const availability = await getRemoteServiceAvailability(serviceName);
+  if (availability === "hosted") return svc ? undefined : "remote";
+  if (svc || availability === "not-hosted") return "local";
+
+  return undefined;
 }
 
 async function fetchLocal(
@@ -226,13 +315,8 @@ async function fetchLocal(
 ): Promise<DaemonResponse> {
   const paths = getDaemonPaths();
   await ensureDaemon(paths);
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  const localToken = await getLocalToken();
-  if (localToken) {
-    headers["Authorization"] = `Bearer ${localToken}`;
-  }
+  await refreshLocalTokenIfNearExpiry(paths);
+  const headers = await buildLocalHeaders();
   const response = await fetch(`http://localhost${path}`, {
     unix: paths.socketPath,
     method: "POST",
@@ -240,6 +324,23 @@ async function fetchLocal(
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+
+  const localToken = headers.Authorization?.replace(/^Bearer\s+/i, "");
+  if (response.status === 401 && localToken && path !== "/api/auth/refresh") {
+    const refreshed = await refreshLocalToken(paths, localToken);
+    if (refreshed) {
+      const retryHeaders = await buildLocalHeaders();
+      const retry = await fetch(`http://localhost${path}`, {
+        unix: paths.socketPath,
+        method: "POST",
+        headers: retryHeaders,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      return (await retry.json()) as DaemonResponse;
+    }
+  }
+
   return (await response.json()) as DaemonResponse;
 }
 
@@ -299,11 +400,11 @@ async function fetchRemote(
 
 /**
  * Shared fetch helper with per-service routing.
- * Routes based on the service's "source" field in local config:
- * - "local": always use local daemon
- * - "remote": always use remote daemon
- * - "remote-local": try remote, fall back to local on failure
- * Default (no source set): "remote-local" if MCP2CLI_REMOTE_URL is set, else "local".
+ * Routes based on explicit source, platform support, and remote discovery.
+ * Missing local services are remote only when discovery positively hosts them.
+ * Platform-disallowed services use remote only when hosted remotely.
+ * "remote-local" falls back to local for connection failures, but never for
+ * remote auth failures.
  */
 async function fetchDaemon(
   path: string,
@@ -329,7 +430,10 @@ async function fetchDaemon(
     // "remote-local": try remote, fall back to local
     try {
       return await fetchRemote(path, body);
-    } catch {
+    } catch (err) {
+      if (isRemoteAuthError(err)) {
+        throw err;
+      }
       return await fetchLocal(path, body);
     }
   } catch (err) {
@@ -343,6 +447,10 @@ async function fetchDaemon(
       },
     };
   }
+}
+
+function isRemoteAuthError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith("Remote auth failed");
 }
 
 /**
@@ -384,13 +492,8 @@ export async function fetchDaemonApi(
 ): Promise<unknown> {
   const paths = getDaemonPaths();
   await ensureDaemon(paths);
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  const localToken = await getLocalToken();
-  if (localToken) {
-    headers["Authorization"] = `Bearer ${localToken}`;
-  }
+  await refreshLocalTokenIfNearExpiry(paths);
+  const headers = await buildLocalHeaders();
   const response = await fetch(`http://localhost${path}`, {
     unix: paths.socketPath,
     method,
@@ -398,5 +501,22 @@ export async function fetchDaemonApi(
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+
+  const localToken = headers.Authorization?.replace(/^Bearer\s+/i, "");
+  if (response.status === 401 && localToken && path !== "/api/auth/refresh") {
+    const refreshed = await refreshLocalToken(paths, localToken);
+    if (refreshed) {
+      const retryHeaders = await buildLocalHeaders();
+      const retry = await fetch(`http://localhost${path}`, {
+        unix: paths.socketPath,
+        method,
+        headers: retryHeaders,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      return await retry.json();
+    }
+  }
+
   return await response.json();
 }

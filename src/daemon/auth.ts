@@ -86,12 +86,15 @@ const PATH_PERMISSIONS: Array<{ pattern: RegExp; method: string; permission: str
   { pattern: /^\/shutdown$/, method: "POST", permission: "shutdown" },
   // Management API
   { pattern: /^\/api\/services$/, method: "GET", permission: "list" },
+  { pattern: /^\/api\/services\/discovery$/, method: "GET", permission: "list" },
   { pattern: /^\/api\/services$/, method: "POST", permission: "add" },
+  { pattern: /^\/api\/services\/export$/, method: "GET", permission: "import" },
   { pattern: /^\/api\/services\/reload$/, method: "POST", permission: "reload" },
   { pattern: /^\/api\/services\/import$/, method: "POST", permission: "import" },
   { pattern: /^\/api\/services\/[^/]+$/, method: "PUT", permission: "update" },
   { pattern: /^\/api\/services\/[^/]+$/, method: "DELETE", permission: "remove" },
   { pattern: /^\/api\/services\/[^/]+\/status$/, method: "GET", permission: "status" },
+  { pattern: /^\/api\/metrics\/user\/[^/]+$/, method: "GET", permission: "status" },
   // Credential management API
   { pattern: /^\/api\/credentials$/, method: "GET", permission: "credentials-write" },
   { pattern: /^\/api\/credentials\/resolve$/, method: "GET", permission: "credentials-read" },

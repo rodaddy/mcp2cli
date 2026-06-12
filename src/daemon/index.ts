@@ -16,6 +16,8 @@ import { MetricsCollector } from "./metrics.ts";
 import { ConfigManager } from "./config-manager.ts";
 import { TokenAuthProvider } from "./auth-provider.ts";
 import { CredentialManager } from "../credentials/index.ts";
+import { startConfigFileWatchers } from "./file-watch.ts";
+import type { FileWatchHandle } from "./file-watch.ts";
 
 const log = createLogger("daemon");
 
@@ -91,6 +93,7 @@ export async function startDaemon(): Promise<void> {
 
   // Graceful shutdown function
   let isShuttingDown = false;
+  let fileWatchers: FileWatchHandle | null = null;
   const gracefulShutdown = async (): Promise<void> => {
     if (isShuttingDown) return;
     isShuttingDown = true;
@@ -104,6 +107,7 @@ export async function startDaemon(): Promise<void> {
     try {
       // Stop accepting new connections, drain in-flight requests
       server.stop();
+      fileWatchers?.close();
 
       // Close all MCP connections (reuses McpTransport.close() multi-step shutdown)
       await pool.closeAll();
@@ -140,6 +144,12 @@ export async function startDaemon(): Promise<void> {
     },
     authProvider,
     metrics,
+  });
+
+  fileWatchers = startConfigFileWatchers({
+    configManager,
+    credentialManager,
+    authProvider,
   });
 
   // Install signal handlers

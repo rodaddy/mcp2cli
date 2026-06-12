@@ -41,6 +41,8 @@ const SENSITIVE_PATTERNS = new RegExp(`(?:${SENSITIVE_KEYS})`, "i");
 export interface AuditEntry {
   timestamp: string;
   path: "daemon" | "cli";
+  userId?: string;
+  role?: string;
   service: string;
   tool: string;
   resolvedTool?: string;
@@ -262,6 +264,8 @@ export function writeAuditEntry(entry: AuditEntry): void {
  */
 export function auditToolCall(opts: {
   path: "daemon" | "cli";
+  userId?: string;
+  role?: string;
   service: string;
   tool: string;
   resolvedTool?: string;
@@ -275,6 +279,8 @@ export function auditToolCall(opts: {
   writeAuditEntry({
     timestamp: new Date().toISOString(),
     path: opts.path,
+    userId: opts.userId,
+    role: opts.role,
     service: opts.service,
     tool: opts.tool,
     resolvedTool: opts.resolvedTool,

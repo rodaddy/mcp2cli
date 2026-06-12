@@ -45,6 +45,25 @@ bun run build
 
 The compiled binary lands at `dist/mcp2cli`. Add it to your PATH or symlink it.
 
+### macOS Binary Upgrades
+
+On macOS, do not overwrite an existing compiled binary in place with `cp new dist/mcp2cli`. Replacing the contents of the same inode can invalidate the ad-hoc code signature and cause the next exec to be killed with `SIGKILL` / exit code 137.
+
+Use a fresh inode instead:
+
+```bash
+rm dist/mcp2cli
+cp /path/to/new/mcp2cli dist/mcp2cli
+```
+
+If the local UI daemon is managed by launchd, restart it after replacing the binary:
+
+```bash
+launchctl kickstart -k gui/501/com.mcp2cli.local-ui
+```
+
+The already-running daemon keeps the old inode open until restart, so this is safe to do while the daemon is live.
+
 ## Configuration
 
 ### Service Registry
@@ -196,6 +215,7 @@ fi
 |----------|---------|-------------|
 | `MCP2CLI_LOG_LEVEL` | `silent` | Log verbosity: `silent`, `error`, `warn`, `info`, `debug` |
 | `MCP2CLI_IDLE_TIMEOUT` | `60` | Daemon idle timeout in seconds |
+| `MCP2CLI_STARTUP_TIMEOUT` | `10000` | CLI wait time for daemon startup readiness in milliseconds |
 | `MCP2CLI_TOOL_TIMEOUT` | `30000` | Tool call timeout in milliseconds |
 | `MCP2CLI_POOL_MAX` | `50` | Max concurrent MCP connections in the pool |
 | `MCP2CLI_LOG_DIR` | `~/.cache/mcp2cli/logs` | Directory for stderr capture logs |
@@ -270,13 +290,15 @@ mcp2cli supports multi-user RBAC via `~/.config/mcp2cli/tokens.json`. Each user 
       "role": "admin",
       "description": "Full admin access",
       "username": "rico",
-      "password": "your-web-ui-password"
+      "password": "your-web-ui-password",
+      "expiresAt": "2026-07-01T00:00:00.000Z"
     },
     {
       "id": "skippy",
       "token": "your-agent-token-here",
       "role": "agent",
-      "description": "AI agent - tools + read, no config mutations"
+      "description": "AI agent - tools + read, no config mutations",
+      "expiresAt": "2026-07-01T00:00:00.000Z"
     },
     {
       "id": "viewer01",
@@ -302,6 +324,8 @@ Generate secure tokens: `openssl rand -base64 32`
 | Reload, import, shutdown | no | no | yes |
 
 The `username`/`password` fields enable web UI login at the daemon's root URL. Token-based auth (Bearer header) works for all API and CLI access.
+
+The optional `expiresAt` field enables token expiry and refresh. Expired tokens are rejected. Near-expiry tokens from `tokens.json` can be rotated through `POST /api/auth/refresh`; the daemon writes the new token back to `tokens.json` and hot-reloads token file edits. Local CLI clients proactively refresh near-expiry admin tokens before daemon API calls.
 
 ### Fallback Behavior
 
@@ -637,7 +661,16 @@ Manual edits inside `MANUAL:START` / `MANUAL:END` markers are preserved across r
 |----------|---------|-------------|
 | `MCP2CLI_CACHE_DIR` | `~/.cache/mcp2cli` | Base directory for schema cache and circuit breaker state |
 | `MCP2CLI_TOKENS_FILE` | `~/.config/mcp2cli/tokens.json` | Path to multi-user token config |
+| `MCP2CLI_TOKEN_REFRESH_WINDOW_MS` | `86400000` | Refresh window for expiring tokens (default 24h) |
+| `MCP2CLI_TOKEN_TTL_MS` | `2592000000` | Lifetime for refreshed tokens (default 30d) |
 | `MCP2CLI_CREDENTIALS_FILE` | `~/.config/mcp2cli/credentials.json` | Path to per-identity credential mappings |
+| `MCP2CLI_IMPORT_TOKEN` | (unset) | Bearer token used only for `importUrl` config imports |
+| `MCP2CLI_IMPORT_ALLOWED_HOSTS` | (required for `importUrl`) | Comma-separated allowlist for `importUrl` hostnames |
+| `MCP2CLI_IMPORT_ALLOW_DNS` | (unset) | Set to `1` to permit DNS hostnames for non-private `importUrl` targets |
+| `MCP2CLI_IMPORT_ALLOW_HTTP` | (unset) | Set to `1` to permit non-HTTPS `importUrl` targets |
+| `MCP2CLI_IMPORT_ALLOW_PRIVATE` | (unset) | Set to `1` to permit loopback/private/link-local `importUrl` targets |
+| `MCP2CLI_METRICS_INCLUDE_CALLER` | (unset) | Set to `1` to include raw caller labels on public `/metrics`; disabled by default |
+| `MCP2CLI_VAULTWARDEN_TIMEOUT_MS` | `10000` | Timeout for Vaultwarden-backed `${secret:...}` lookups |
 
 ## Network Deployment
 
@@ -688,8 +721,8 @@ The daemon supports two auth modes (see [Multi-User Authentication](#multi-user-
 All token comparisons use timing-safe equality to prevent timing attacks.
 
 **Auth-exempt paths** -- these skip authentication so load balancers and monitoring can probe without credentials:
-- `GET /health` -- health check with uptime, memory, and pool status
-- `GET /metrics` -- Prometheus metrics endpoint
+- `GET /health` -- health check with uptime, memory, and active connection count
+- `GET /metrics` -- Prometheus metrics endpoint with aggregate service/tool metrics
 
 ### Prometheus Metrics
 
@@ -707,6 +740,12 @@ The daemon exposes metrics at `GET /metrics` in Prometheus text exposition forma
 | `mcp2cli_auth_failures_total` | counter | Total authentication failures |
 | `mcp2cli_process_uptime_seconds` | gauge | Daemon uptime |
 | `mcp2cli_process_memory_rss_bytes` | gauge | Resident set size |
+
+Raw caller labels on public `/metrics` are disabled by default to avoid exposing user IDs to unauthenticated scrapers. Set `MCP2CLI_METRICS_INCLUDE_CALLER=1` only in trusted monitoring environments to add `{service, tool, caller}` series.
+
+For a quick JSON breakdown by identity, call `GET /api/metrics/user/:userId` with a bearer token that has `status` permission. Non-admin callers can only read their own user metrics; admins can read any user.
+
+Remote clients discover the daemon's service inventory through authenticated `GET /api/services/discovery`, not the public `/health` probe.
 
 Add to your Prometheus config:
 

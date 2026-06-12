@@ -152,6 +152,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         idleTimer.onRequestStart();
         metrics.onRequestStart();
         const startTime = performance.now();
+        const caller = authCtx
+          ? { userId: authCtx.userId, role: authCtx.role }
+          : undefined;
         let callService = "unknown";
         let callTool = "unknown";
         let success = false;
@@ -168,6 +171,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           // 1/4: Request received from client
           reqLog.info("request_in", {
+            ...caller,
             service: callService,
             tool: callTool,
             params: sanitizeParams(body.params ?? {}),
@@ -210,6 +214,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           // 2/4: Forwarding request to MCP server
           reqLog.info("mcp_call_start", {
+            ...caller,
             service: callService,
             tool: resolvedTool,
             transport: callTransport,
@@ -240,6 +245,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           // 3/4: Response received from MCP server
           reqLog.info("mcp_call_end", {
+            ...caller,
             service: callService,
             tool: resolvedTool,
             mcpDuration,
@@ -262,6 +268,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           // 3/4 (error path): MCP server error
           reqLog.warn("mcp_call_end", {
+            ...caller,
             service: callService,
             tool: callResolvedTool ?? callTool,
             success: false,
@@ -278,6 +285,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           // 4/4: Response sent to client
           reqLog.info("response_out", {
+            ...caller,
             service: callService,
             tool: callTool,
             totalDuration: duration,
@@ -285,9 +293,11 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             ...(callError ? { error: callError } : {}),
           });
 
-          metrics.onRequestEnd(callService, callTool, success, duration);
+          metrics.onRequestEnd(callService, callTool, success, duration, caller?.userId);
           auditToolCall({
             path: "daemon",
+            userId: caller?.userId,
+            role: caller?.role,
             service: callService,
             tool: callTool,
             resolvedTool: callResolvedTool,
@@ -349,15 +359,10 @@ export function createDaemonServer(opts: DaemonServerOptions) {
       // GET /health -- health check (auth-exempt)
       if (path === "/health" && req.method === "GET") {
         const mem = process.memoryUsage();
-        const currentConfig = getConfig();
-        const configuredServices = Object.keys(currentConfig.services);
-        const connectedServices = pool.baseServiceNames;
         return Response.json({
           status: "ok",
           version: pkg.version,
           uptime: process.uptime(),
-          configuredServices,
-          connectedServices,
           activeConnections: pool.size,
           memory: {
             rss: mem.rss,
@@ -367,12 +372,34 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         });
       }
 
+      // GET /api/services/discovery -- authenticated lightweight service inventory for remote clients
+      if (path === "/api/services/discovery" && req.method === "GET") {
+        const currentConfig = getConfig();
+        return Response.json({
+          success: true,
+          version: pkg.version,
+          configuredServices: Object.keys(currentConfig.services),
+          connectedServices: pool.baseServiceNames,
+        });
+      }
+
       // GET /metrics -- Prometheus metrics (auth-exempt)
       if (path === "/metrics" && req.method === "GET") {
-        const body = metrics.render(pool.size, pool.baseServiceNames);
+        const body = metrics.render(pool.size, pool.baseServiceNames, {
+          includeCallerMetrics: process.env.MCP2CLI_METRICS_INCLUDE_CALLER === "1",
+        });
         return new Response(body, {
           headers: { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" },
         });
+      }
+
+      const userMetricsMatch = path.match(/^\/api\/metrics\/user\/([^/]+)$/);
+      if (userMetricsMatch && req.method === "GET") {
+        const userId = decodeURIComponent(userMetricsMatch[1]!);
+        if (authCtx && authCtx.role !== "admin" && authCtx.userId !== userId) {
+          return errorResponse("AUTH_ERROR", "Permission denied: cannot read metrics for another user", undefined, 403);
+        }
+        return Response.json({ success: true, ...metrics.getUserBreakdown(userId) });
       }
 
       // POST /shutdown -- graceful shutdown
@@ -408,6 +435,28 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         }
       }
 
+      // POST /api/auth/refresh -- rotate a valid near-expiry token from tokens.json
+      if (path === "/api/auth/refresh" && req.method === "POST") {
+        if (!(authProvider instanceof TokenAuthProvider)) {
+          return errorResponse("AUTH_ERROR", "Token refresh not supported with current auth provider", undefined, 501);
+        }
+        const token = extractBearerToken(req);
+        if (!token) {
+          return errorResponse("AUTH_ERROR", "Missing bearer token", undefined, 401);
+        }
+        const result = await authProvider.refreshBearerToken(token);
+        if (!result.ok) {
+          return errorResponse("AUTH_ERROR", result.message, undefined, result.status);
+        }
+        return Response.json({
+          success: true,
+          token: result.token,
+          expiresAt: result.expiresAt,
+          userId: result.userId,
+          role: result.role,
+        });
+      }
+
       // GET /api/auth/me -- returns current user identity and role
       if (path === "/api/auth/me" && req.method === "GET") {
         return Response.json({
@@ -436,6 +485,11 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             ...(svc.backend !== "stdio" && "url" in svc ? { url: svc.url } : {}),
           }));
           return Response.json({ success: true, services });
+        }
+
+        // GET /api/services/export -- sanitized services.json for remote clients
+        if (path === "/api/services/export" && req.method === "GET") {
+          return Response.json(configManager.getSanitizedServices());
         }
 
         // POST /api/services -- add a service { name, config }
@@ -578,6 +632,12 @@ export function createDaemonServer(opts: DaemonServerOptions) {
       return errorResponse("INTERNAL_ERROR", err.message);
     },
   });
+}
+
+function extractBearerToken(req: Request): string | null {
+  const authHeader = req.headers.get("authorization");
+  const match = authHeader?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] ?? null;
 }
 
 /** Shared error handler for /call, /list-tools, /schema endpoints */

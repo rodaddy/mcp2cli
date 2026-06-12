@@ -337,6 +337,8 @@ describe("auditToolCall", () => {
   test("includes resolvedTool and transport when provided", async () => {
     auditToolCall({
       path: "daemon",
+      userId: "skippy",
+      role: "agent",
       service: "test-svc",
       tool: "short_name",
       resolvedTool: "test-svc_short_name",
@@ -348,6 +350,8 @@ describe("auditToolCall", () => {
     await flushAuditQueue();
 
     const entries = await readAuditFile();
+    expect(entries[0]!.userId).toBe("skippy");
+    expect(entries[0]!.role).toBe("agent");
     expect(entries[0]!.resolvedTool).toBe("test-svc_short_name");
     expect(entries[0]!.transport).toBe("stdio");
   });

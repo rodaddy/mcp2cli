@@ -11,6 +11,8 @@ import { ConnectionError } from "../connection/errors.ts";
 import type { McpConnection } from "../connection/types.ts";
 import type { ServicesConfig, HttpService, WebSocketService } from "../config/index.ts";
 import { createLogger } from "../logger/index.ts";
+import { resolveServiceSecretRefs, VaultwardenSecretResolver } from "../secrets/index.ts";
+import type { SecretResolver } from "../secrets/index.ts";
 import { checkDriftOnConnect } from "./drift-hook.ts";
 import { extractPolicy } from "../access/filter.ts";
 import {
@@ -33,6 +35,7 @@ interface PoolEntry {
 interface PoolOptions {
   maxSize?: number;
   healthCheckTimeoutMs?: number;
+  secretResolver?: SecretResolver;
 }
 
 /**
@@ -45,11 +48,13 @@ export class ConnectionPool {
   private pending = new Map<string, Promise<McpConnection>>();
   private readonly _maxSize: number;
   private readonly _healthCheckTimeoutMs: number;
+  private readonly secretResolver: SecretResolver;
 
   constructor(options?: PoolOptions) {
     const envMax = parseInt(process.env.MCP2CLI_POOL_MAX ?? "", 10);
     this._maxSize = options?.maxSize ?? (Number.isNaN(envMax) ? DEFAULT_POOL_MAX : envMax);
     this._healthCheckTimeoutMs = options?.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
+    this.secretResolver = options?.secretResolver ?? new VaultwardenSecretResolver();
   }
 
   /** Maximum number of concurrent connections allowed. */
@@ -110,8 +115,8 @@ export class ConnectionPool {
     }
 
     // Use override if provided, otherwise look up by service name
-    const serviceConfig = serviceConfigOverride ?? config.services[baseServiceName];
-    if (!serviceConfig) {
+    const rawServiceConfig = serviceConfigOverride ?? config.services[baseServiceName];
+    if (!rawServiceConfig) {
       throw new ConnectionError(
         `Service not found in config: ${baseServiceName}`,
         "service_not_configured",
@@ -119,22 +124,29 @@ export class ConnectionPool {
     }
     // Create connection promise and store in pending map
     log.info("connecting", { service: poolKey });
-    let connectFn: () => Promise<McpConnection>;
-    if (serviceConfig.backend === "http") {
-      connectFn = () => this.connectHttpWithFallback(poolKey, baseServiceName, serviceConfig);
-    } else if (serviceConfig.backend === "websocket") {
-      connectFn = () => this.connectWebSocketWithFallback(poolKey, baseServiceName, serviceConfig);
-    } else if (serviceConfig.backend === "stdio") {
-      connectFn = () => connectToService(serviceConfig);
-    } else {
-      const backend = (serviceConfig as { backend: string }).backend;
-      throw new ConnectionError(
-        `Unsupported backend for service ${poolKey}: ${backend}`,
-        "unsupported_backend",
+    const connectPromise = (async () => {
+      const serviceConfig = await resolveServiceSecretRefs(
+        baseServiceName,
+        rawServiceConfig,
+        this.secretResolver,
       );
-    }
-    const connectPromise = connectFn().then(
-      (connection) => {
+      let connection: McpConnection;
+      if (serviceConfig.backend === "http") {
+        connection = await this.connectHttpWithFallback(poolKey, baseServiceName, serviceConfig);
+      } else if (serviceConfig.backend === "websocket") {
+        connection = await this.connectWebSocketWithFallback(poolKey, baseServiceName, serviceConfig);
+      } else if (serviceConfig.backend === "stdio") {
+        connection = await connectToService(serviceConfig);
+      } else {
+        const backend = (serviceConfig as { backend: string }).backend;
+        throw new ConnectionError(
+          `Unsupported backend for service ${poolKey}: ${backend}`,
+          "unsupported_backend",
+        );
+      }
+      return { connection, serviceConfig };
+    })().then(
+      ({ connection, serviceConfig }) => {
         this.connections.set(poolKey, {
           connection,
           connectedAt: Date.now(),

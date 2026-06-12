@@ -72,12 +72,21 @@ const testConfig: ServicesConfig = {
   },
 };
 
+const testResolver = {
+  resolve: mock(async (ref: string) => {
+    if (ref === "svc#token") return "resolved-token";
+    if (ref === "svc#url") return "http://resolved.example/mcp";
+    throw new Error(`unexpected ref ${ref}`);
+  }),
+};
+
 describe("ConnectionPool", () => {
   let pool: InstanceType<typeof ConnectionPool>;
 
   beforeEach(() => {
-    pool = new ConnectionPool();
+    pool = new ConnectionPool({ secretResolver: testResolver });
     mockConnectToService.mockClear();
+    testResolver.resolve.mockClear();
   });
 
   test("getConnection creates new connection (mock called once)", async () => {
@@ -128,6 +137,33 @@ describe("ConnectionPool", () => {
     );
 
     expect(mockConnectToService).toHaveBeenCalledTimes(1);
+  });
+
+  test("resolves secret refs before opening a connection", async () => {
+    const config: ServicesConfig = {
+      services: {
+        secreted: {
+          backend: "http",
+          url: "${secret:svc#url}",
+          headers: { Authorization: "Bearer ${secret:svc#token}" },
+        },
+      },
+    };
+
+    await pool.getConnection("secreted", config);
+
+    expect(mockConnectToService).toHaveBeenCalledTimes(1);
+    const calls = mockConnectToService.mock.calls as unknown as Array<[unknown]>;
+    expect(calls[0]![0]).toEqual({
+      backend: "http",
+      url: "http://resolved.example/mcp",
+      headers: { Authorization: "Bearer resolved-token" },
+    });
+    const original = config.services.secreted!;
+    expect(original.backend).toBe("http");
+    if (original.backend === "http") {
+      expect(original.url).toBe("${secret:svc#url}");
+    }
   });
 
   test("closeServicePattern only closes entries for the matching base service", async () => {
