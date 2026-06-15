@@ -25,6 +25,10 @@ export class CredentialManager {
     this.configPath = configPath;
   }
 
+  get configFilePath(): string {
+    return this.configPath;
+  }
+
   /**
    * Load credentials from disk. Returns empty config if file doesn't exist.
    */

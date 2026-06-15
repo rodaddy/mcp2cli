@@ -3,14 +3,13 @@
  * Tries StreamableHTTPClientTransport first (modern, spec 2025-03-26),
  * falls back to SSEClientTransport (deprecated, spec 2024-11-05).
  */
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { ConnectionError } from "./errors.ts";
+import { createMcpClient } from "./capabilities.ts";
 import type { McpConnection } from "./types.ts";
 import type { HttpService } from "../config/schema.ts";
 import { createLogger } from "../logger/index.ts";
-import pkg from "../../package.json" with { type: "json" };
 
 const log = createLogger("http-transport");
 
@@ -37,7 +36,7 @@ export async function connectToHttpService(
     const streamableTransport = new StreamableHTTPClientTransport(url, {
       requestInit,
     });
-    const client = new Client({ name: "mcp2cli", version: pkg.version });
+    const client = createMcpClient();
 
     await Promise.race([
       client.connect(streamableTransport),
@@ -70,7 +69,7 @@ export async function connectToHttpService(
       requestInit,
     });
 
-    const client = new Client({ name: "mcp2cli", version: pkg.version });
+    const client = createMcpClient();
 
     await Promise.race([
       client.connect(sseTransport),

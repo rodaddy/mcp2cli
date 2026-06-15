@@ -1,6 +1,15 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { getRemoteConfig } from "../../src/daemon/paths.ts";
 import { checkRemoteHealth } from "../../src/process/liveness.ts";
+import {
+  clearRemoteServiceCache,
+  getRemoteServiceAvailability,
+  getRemoteServiceNames,
+} from "../../src/process/remote-discovery.ts";
+import { clearClientConfigCache, resolveSource } from "../../src/process/client.ts";
+import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 describe("getRemoteConfig", () => {
   const originalUrl = process.env.MCP2CLI_REMOTE_URL;
@@ -108,5 +117,225 @@ describe("checkRemoteHealth", () => {
   test("handles trailing slash in URL", async () => {
     const result = await checkRemoteHealth(`${baseUrl}/`, undefined);
     expect(result.status).toBe("ok");
+  });
+});
+
+describe("remote service discovery", () => {
+  const originalUrl = process.env.MCP2CLI_REMOTE_URL;
+  const originalToken = process.env.MCP2CLI_AUTH_TOKEN;
+  const originalTtl = process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS;
+  let server: ReturnType<typeof Bun.serve>;
+  let baseUrl: string;
+
+  beforeEach(() => {
+    clearRemoteServiceCache();
+    process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS = "0";
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/services/discovery") {
+          return Response.json({
+            success: true,
+            version: "0.3.3",
+            configuredServices: ["yt-dlp", "stealth-browser"],
+          });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    baseUrl = `http://localhost:${server.port}`;
+    process.env.MCP2CLI_REMOTE_URL = baseUrl;
+    delete process.env.MCP2CLI_AUTH_TOKEN;
+  });
+
+  afterEach(() => {
+    server.stop(true);
+    clearRemoteServiceCache();
+    if (originalUrl !== undefined) {
+      process.env.MCP2CLI_REMOTE_URL = originalUrl;
+    } else {
+      delete process.env.MCP2CLI_REMOTE_URL;
+    }
+    if (originalToken !== undefined) {
+      process.env.MCP2CLI_AUTH_TOKEN = originalToken;
+    } else {
+      delete process.env.MCP2CLI_AUTH_TOKEN;
+    }
+    if (originalTtl !== undefined) {
+      process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS = originalTtl;
+    } else {
+      delete process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS;
+    }
+  });
+
+  test("lists remote configured services from authenticated daemon discovery", async () => {
+    await expect(getRemoteServiceNames()).resolves.toEqual(["yt-dlp", "stealth-browser"]);
+  });
+
+  test("distinguishes hosted and non-hosted services", async () => {
+    await expect(getRemoteServiceAvailability("yt-dlp")).resolves.toBe("hosted");
+    await expect(getRemoteServiceAvailability("king-secrets")).resolves.toBe("not-hosted");
+  });
+
+  test("returns no-remote without MCP2CLI_REMOTE_URL", async () => {
+    delete process.env.MCP2CLI_REMOTE_URL;
+    clearRemoteServiceCache();
+    await expect(getRemoteServiceAvailability("yt-dlp")).resolves.toBe("no-remote");
+  });
+
+  test("does not cache failed discovery snapshots", async () => {
+    let fail = true;
+    server.stop(true);
+    clearRemoteServiceCache();
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/services/discovery") {
+          if (fail) {
+            fail = false;
+            return new Response("temporary failure", { status: 500 });
+          }
+          return Response.json({
+            success: true,
+            configuredServices: ["recovered"],
+          });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    process.env.MCP2CLI_REMOTE_URL = `http://localhost:${server.port}`;
+    process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS = "60000";
+
+    await expect(getRemoteServiceAvailability("recovered")).resolves.toBe("unknown");
+    await expect(getRemoteServiceAvailability("recovered")).resolves.toBe("hosted");
+  });
+});
+
+describe("remote-aware source resolution", () => {
+  const originalUrl = process.env.MCP2CLI_REMOTE_URL;
+  const originalConfig = process.env.MCP2CLI_CONFIG;
+  const originalTtl = process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS;
+  let server: ReturnType<typeof Bun.serve>;
+  let testDir: string;
+  let configPath: string;
+
+  beforeEach(async () => {
+    clearRemoteServiceCache();
+    clearClientConfigCache();
+    process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS = "0";
+    testDir = await mkdtemp(join(tmpdir(), "mcp2cli-remote-source-test-"));
+    configPath = join(testDir, "services.json");
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/services/discovery") {
+          return Response.json({
+            success: true,
+            configuredServices: ["remote-only", "hosted-local"],
+          });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    process.env.MCP2CLI_REMOTE_URL = `http://localhost:${server.port}`;
+    process.env.MCP2CLI_CONFIG = configPath;
+  });
+
+  afterEach(async () => {
+    server.stop(true);
+    clearRemoteServiceCache();
+    clearClientConfigCache();
+    await rm(testDir, { recursive: true, force: true });
+    if (originalUrl !== undefined) {
+      process.env.MCP2CLI_REMOTE_URL = originalUrl;
+    } else {
+      delete process.env.MCP2CLI_REMOTE_URL;
+    }
+    if (originalConfig !== undefined) {
+      process.env.MCP2CLI_CONFIG = originalConfig;
+    } else {
+      delete process.env.MCP2CLI_CONFIG;
+    }
+    if (originalTtl !== undefined) {
+      process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS = originalTtl;
+    } else {
+      delete process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS;
+    }
+  });
+
+  async function writeServices(services: Record<string, unknown>): Promise<void> {
+    await Bun.write(configPath, JSON.stringify({ services }, null, 2));
+    clearClientConfigCache();
+  }
+
+  test("uses remote for remote-only services discovered via authenticated discovery", async () => {
+    await writeServices({
+      local: { backend: "stdio", command: "echo" },
+    });
+    await expect(resolveSource("remote-only")).resolves.toBe("remote");
+  });
+
+  test("uses local when the remote daemon does not host an unpinned local service", async () => {
+    await writeServices({
+      local: { backend: "stdio", command: "echo" },
+    });
+    await expect(resolveSource("local")).resolves.toBe("local");
+  });
+
+  test("uses local for configured services when remote discovery is unavailable", async () => {
+    server.stop(true);
+    clearRemoteServiceCache();
+    await writeServices({
+      local: { backend: "stdio", command: "echo" },
+    });
+    await expect(resolveSource("local")).resolves.toBe("local");
+  });
+
+  test("explicit source wins over platform and remote discovery inference", async () => {
+    await writeServices({
+      local: {
+        backend: "stdio",
+        command: "echo",
+        source: "remote-local",
+        platforms: ["plan9"],
+      },
+    });
+    await expect(resolveSource("local")).resolves.toBe("remote-local");
+  });
+
+  test("platforms prefer local when current OS is allowed", async () => {
+    await writeServices({
+      local: {
+        backend: "stdio",
+        command: "echo",
+        platforms: [process.platform],
+      },
+    });
+    await expect(resolveSource("local")).resolves.toBe("local");
+  });
+
+  test("platforms prefer remote when current OS is not allowed", async () => {
+    await writeServices({
+      local: {
+        backend: "stdio",
+        command: "echo",
+        platforms: ["not-this-platform"],
+      },
+    });
+    await expect(resolveSource("local")).resolves.toBe("local");
+  });
+
+  test("platforms use remote only when unsupported service is hosted remotely", async () => {
+    await writeServices({
+      "hosted-local": {
+        backend: "stdio",
+        command: "echo",
+        platforms: ["not-this-platform"],
+      },
+    });
+    await expect(resolveSource("hosted-local")).resolves.toBe("remote");
   });
 });

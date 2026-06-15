@@ -3,6 +3,41 @@ import { resolve } from "path";
 import { runCli } from "../test-helpers/run-cli.ts";
 
 const PROJECT_ROOT = resolve(import.meta.dir, "../..");
+const REMOTE_DAEMON_FIXTURE = resolve(
+  PROJECT_ROOT,
+  "tests/fixtures/mock-remote-daemon.ts",
+);
+
+async function startMockRemoteDaemon(env?: Record<string, string>): Promise<{
+  url: string;
+  stop: () => Promise<void>;
+}> {
+  const proc = Bun.spawn(["bun", "run", REMOTE_DAEMON_FIXTURE], {
+    cwd: PROJECT_ROOT,
+    env: { ...process.env, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (!buffer.includes("\n")) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      throw new Error("mock remote daemon exited before reporting its port");
+    }
+    buffer += decoder.decode(chunk.value);
+  }
+  const firstLine = buffer.split("\n")[0]!;
+  const { port } = JSON.parse(firstLine) as { port: number };
+  return {
+    url: `http://localhost:${port}`,
+    stop: async () => {
+      proc.kill("SIGTERM");
+      await proc.exited;
+    },
+  };
+}
 
 describe("CLI dispatch", () => {
   test("no args: exitCode 0, stdout contains help text", () => {
@@ -82,6 +117,98 @@ describe("services command - config integration", () => {
     const names = data.services.map((s: { name: string }) => s.name);
     expect(names).toContain("n8n");
     expect(names).toContain("vault");
+  });
+
+  test("services command merges remote-only services from daemon discovery", async () => {
+    const remote = await startMockRemoteDaemon();
+    try {
+      const configPath = resolve(
+        PROJECT_ROOT,
+        "tests/fixtures/valid-config.json",
+      );
+      const result = runCli(["services"], {
+        MCP2CLI_CONFIG: configPath,
+        MCP2CLI_REMOTE_URL: remote.url,
+      });
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      const remoteOnly = data.services.find((s: { name: string }) => s.name === "yt-dlp");
+      expect(remoteOnly).toMatchObject({
+        name: "yt-dlp",
+        backend: "remote",
+        status: "remote-configured",
+      });
+    } finally {
+      await remote.stop();
+    }
+  });
+
+  test("services command lists remote-only services when local config is missing", async () => {
+    const remote = await startMockRemoteDaemon();
+    try {
+      const result = runCli(["services"], {
+        MCP2CLI_CONFIG: "/tmp/nonexistent-mcp2cli-remote-config.json",
+        MCP2CLI_REMOTE_URL: remote.url,
+      });
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.services).toContainEqual(expect.objectContaining({
+        name: "yt-dlp",
+        backend: "remote",
+        status: "remote-configured",
+      }));
+    } finally {
+      await remote.stop();
+    }
+  });
+
+  test("remote-only service invocation routes to remote daemon", async () => {
+    const remote = await startMockRemoteDaemon();
+    try {
+      const configPath = resolve(
+        PROJECT_ROOT,
+        "tests/fixtures/valid-config.json",
+      );
+      const result = runCli(["yt-dlp", "download"], {
+        MCP2CLI_CONFIG: configPath,
+        MCP2CLI_NO_DAEMON: "",
+        MCP2CLI_REMOTE_RETRIES: "1",
+        MCP2CLI_REMOTE_URL: remote.url,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        success: true,
+        result: {
+          routed: "remote",
+          request: { service: "yt-dlp", tool: "download", params: {} },
+        },
+      });
+    } finally {
+      await remote.stop();
+    }
+  });
+
+  test("remote auth failure does not fall back to local daemon execution", async () => {
+    const remote = await startMockRemoteDaemon({ MOCK_REMOTE_AUTH_FAIL: "1" });
+    try {
+      const configPath = resolve(
+        PROJECT_ROOT,
+        "tests/fixtures/valid-config.json",
+      );
+      const result = runCli(["n8n", "list"], {
+        MCP2CLI_CONFIG: configPath,
+        MCP2CLI_NO_DAEMON: "",
+        MCP2CLI_REMOTE_RETRIES: "1",
+        MCP2CLI_REMOTE_URL: remote.url,
+      });
+
+      expect(result.exitCode).toBe(5);
+      const error = JSON.parse(result.stdout);
+      expect(error.code).toBe("CONNECTION_ERROR");
+      expect(error.message).toContain("Remote auth failed");
+    } finally {
+      await remote.stop();
+    }
   });
 
   test("missing config exits 1 with CONFIG_NOT_FOUND", () => {

@@ -2,13 +2,12 @@
  * WebSocket transport for connecting to remote MCP servers.
  * Uses the SDK's built-in WebSocketClientTransport.
  */
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { WebSocketClientTransport } from "@modelcontextprotocol/sdk/client/websocket.js";
 import { ConnectionError } from "./errors.ts";
+import { createMcpClient } from "./capabilities.ts";
 import type { McpConnection } from "./types.ts";
 import type { WebSocketService } from "../config/schema.ts";
 import { createLogger } from "../logger/index.ts";
-import pkg from "../../package.json" with { type: "json" };
 
 const log = createLogger("websocket-transport");
 
@@ -26,7 +25,7 @@ export async function connectToWebSocketService(
   try {
     log.info("connecting_websocket", { url: service.url });
     const transport = new WebSocketClientTransport(url);
-    const client = new Client({ name: "mcp2cli", version: pkg.version });
+    const client = createMcpClient();
 
     await Promise.race([
       client.connect(transport),

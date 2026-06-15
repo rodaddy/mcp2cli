@@ -6,7 +6,7 @@ import {
   applyFieldMask,
 } from "../../invocation/index.ts";
 import { validationResultToCliError } from "../../validation/pipelines.ts";
-import { loadConfig } from "../../config/index.ts";
+import { ConfigError, loadConfig } from "../../config/index.ts";
 import { connectToService } from "../../connection/index.ts";
 import { connectToHttpService } from "../../connection/http-transport.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
@@ -19,6 +19,8 @@ import { EXIT_CODES } from "../../types/index.ts";
 import type { ErrorCode } from "../../types/index.ts";
 import type { SchemaOutput } from "../../schema/types.ts";
 import { formatOutput } from "../../format/index.ts";
+import { resolveDirectServiceConfig } from "./direct-service.ts";
+import { shouldRouteMissingServiceToRemote } from "./remote-routing.ts";
 
 /**
  * Map daemon error codes to semantic exit codes.
@@ -65,10 +67,80 @@ export async function handleToolCall(args: string[]): Promise<void> {
   }
 
   // 3. Load config and resolve service
-  const config = await loadConfig();
-  const service = config.services[parsed.value.serviceName];
+  const daemonEnabled = !process.env.MCP2CLI_NO_DAEMON;
+  let config: Awaited<ReturnType<typeof loadConfig>> | null = null;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    if (!(err instanceof ConfigError) || err.code !== "CONFIG_NOT_FOUND" || !daemonEnabled) {
+      throw err;
+    }
+  }
+  const service = config?.services[parsed.value.serviceName];
 
   if (!service) {
+    if (await shouldRouteMissingServiceToRemote(parsed.value.serviceName, daemonEnabled)) {
+      if (parsed.value.dryRun) {
+        const schemaResponse = await getSchemaViaDaemon({
+          service: parsed.value.serviceName,
+          tool: parsed.value.toolName,
+        });
+
+        if (!schemaResponse.success) {
+          printError({
+            error: true,
+            code: schemaResponse.error.code,
+            message: schemaResponse.error.message,
+            ...(schemaResponse.error.reason ? { reason: schemaResponse.error.reason } : {}),
+          });
+          process.exitCode = mapErrorCodeToExit(schemaResponse.error.code);
+          return;
+        }
+
+        const schema = schemaResponse.result as SchemaOutput;
+        const preview = formatDryRunPreview({
+          service: parsed.value.serviceName,
+          tool: parsed.value.toolName,
+          params: parsed.value.params,
+          toolDescription: schema.description,
+          inputSchema: schema.inputSchema,
+          fields: parsed.value.fields,
+        });
+
+        console.log(JSON.stringify(preview));
+        process.exitCode = EXIT_CODES.DRY_RUN;
+        return;
+      }
+
+      const result = await callViaDaemon({
+        service: parsed.value.serviceName,
+        tool: parsed.value.toolName,
+        params: parsed.value.params,
+      });
+
+      if (result.success) {
+        let outputData = result.result;
+        if (parsed.value.fields.length > 0) {
+          const { masked, missing } = applyFieldMask(result.result, parsed.value.fields);
+          for (const field of missing) {
+            process.stderr.write(`warning: field "${field}" not found in response\n`);
+          }
+          outputData = masked;
+        }
+        console.log(formatOutput(outputData, parsed.value.format));
+        process.exitCode = EXIT_CODES.SUCCESS;
+      } else {
+        printError({
+          error: true,
+          code: result.error.code,
+          message: result.error.message,
+          ...(result.error.reason ? { reason: result.error.reason } : {}),
+        });
+        process.exitCode = mapErrorCodeToExit(result.error.code);
+      }
+      return;
+    }
+
     printError({
       error: true,
       code: "UNKNOWN_COMMAND",
@@ -90,8 +162,6 @@ export async function handleToolCall(args: string[]): Promise<void> {
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
   }
-
-  const daemonEnabled = !process.env.MCP2CLI_NO_DAEMON;
 
   if (daemonEnabled) {
     // Daemon path: route through persistent daemon process
@@ -165,11 +235,12 @@ export async function handleToolCall(args: string[]): Promise<void> {
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
   // 4. Connect to MCP server (stdio, http, or websocket)
-  const connection = service.backend === "http"
-    ? await connectToHttpService(service)
-    : service.backend === "websocket"
-      ? await connectToWebSocketService(service)
-      : await connectToService(service);
+  const directService = await resolveDirectServiceConfig(parsed.value.serviceName, service);
+  const connection = directService.backend === "http"
+    ? await connectToHttpService(directService)
+    : directService.backend === "websocket"
+      ? await connectToWebSocketService(directService)
+      : await connectToService(directService);
 
   const directStartTime = performance.now();
   let directSuccess = false;
@@ -177,7 +248,7 @@ export async function handleToolCall(args: string[]): Promise<void> {
   let directError: string | undefined;
   let directResolvedTool: string | undefined;
   let dryRun = false;
-  const directTransport = service.backend;
+  const directTransport = directService.backend;
 
   try {
     // Dry-run interception (inside try/finally so connection closes)

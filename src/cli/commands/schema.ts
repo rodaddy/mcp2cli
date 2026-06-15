@@ -4,7 +4,7 @@
  * ADV-01: Checks cache first, falls back to live fetch, caches result.
  * Supports --fresh flag to bypass cache for one call.
  */
-import { loadConfig } from "../../config/index.ts";
+import { ConfigError, loadConfig } from "../../config/index.ts";
 import { connectToService } from "../../connection/index.ts";
 import { connectToHttpService } from "../../connection/http-transport.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
@@ -24,6 +24,8 @@ import { validateIdentifier } from "../../validation/pipelines.ts";
 import { printError } from "../errors.ts";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { CommandHandler } from "../../types/index.ts";
+import { resolveDirectServiceConfig } from "./direct-service.ts";
+import { shouldRouteMissingServiceToRemote } from "./remote-routing.ts";
 
 export const handleSchema: CommandHandler = async (args: string[]) => {
   // Extract --fresh flag before parsing positional args
@@ -72,10 +74,38 @@ export const handleSchema: CommandHandler = async (args: string[]) => {
   }
 
   // Load config and resolve service
-  const config = await loadConfig();
-  const service = config.services[serviceName];
+  const daemonEnabled = !process.env.MCP2CLI_NO_DAEMON;
+  let config: Awaited<ReturnType<typeof loadConfig>> | null = null;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    if (!(err instanceof ConfigError) || err.code !== "CONFIG_NOT_FOUND" || !daemonEnabled) {
+      throw err;
+    }
+  }
+  const service = config?.services[serviceName];
 
   if (!service) {
+    if (await shouldRouteMissingServiceToRemote(serviceName, daemonEnabled)) {
+      const result = await getSchemaViaDaemon({ service: serviceName, tool: toolName });
+
+      if (result.success) {
+        const schemaOutput = result.result as SchemaOutput;
+        console.log(formatSchemaOutput(schemaOutput));
+        await cacheSchemaResult(serviceName, schemaOutput);
+        process.exitCode = EXIT_CODES.SUCCESS;
+      } else {
+        printError({
+          error: true,
+          code: result.error.code,
+          message: result.error.message,
+          ...(result.error.reason ? { reason: result.error.reason } : {}),
+        });
+        process.exitCode = EXIT_CODES.VALIDATION;
+      }
+      return;
+    }
+
     printError({
       error: true,
       code: "UNKNOWN_COMMAND",
@@ -120,8 +150,6 @@ export const handleSchema: CommandHandler = async (args: string[]) => {
     }
   }
 
-  const daemonEnabled = !process.env.MCP2CLI_NO_DAEMON;
-
   if (daemonEnabled) {
     // Daemon path: get full SchemaOutput via daemon's /schema endpoint
     const result = await getSchemaViaDaemon({ service: serviceName, tool: toolName });
@@ -147,11 +175,12 @@ export const handleSchema: CommandHandler = async (args: string[]) => {
   // Direct path (MCP2CLI_NO_DAEMON=1): legacy direct connection
 
   // Connect and get schema (stdio, http, or websocket)
-  const connection = service.backend === "http"
-    ? await connectToHttpService(service)
-    : service.backend === "websocket"
-      ? await connectToWebSocketService(service)
-      : await connectToService(service);
+  const directService = await resolveDirectServiceConfig(serviceName, service);
+  const connection = directService.backend === "http"
+    ? await connectToHttpService(directService)
+    : directService.backend === "websocket"
+      ? await connectToWebSocketService(directService)
+      : await connectToService(directService);
 
   try {
     const result = await getToolSchema(connection.client, toolName, serviceName);

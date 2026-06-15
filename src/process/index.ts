@@ -3,6 +3,8 @@ export {
   listToolsViaDaemon,
   getSchemaViaDaemon,
   fetchDaemonApi,
+  clearClientConfigCache,
+  resolveSource,
 } from "./client.ts";
 export {
   getDaemonStatus,
@@ -10,4 +12,11 @@ export {
   cleanStaleDaemon,
   checkRemoteHealth,
 } from "./liveness.ts";
+export {
+  clearRemoteServiceCache,
+  getRemoteServiceAvailability,
+  getRemoteServiceNames,
+  getRemoteServiceSnapshot,
+} from "./remote-discovery.ts";
+export type { RemoteServiceAvailability } from "./remote-discovery.ts";
 export type { DaemonStatus } from "./types.ts";

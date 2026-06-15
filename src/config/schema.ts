@@ -10,6 +10,11 @@ import { z } from "zod";
 export const SourceSchema = z.enum(["local", "remote", "remote-local"]).optional();
 export type ServiceSource = z.infer<typeof SourceSchema>;
 
+const SecretRefUrlSchema = z.string().refine(
+  (value) => (/^\$\{secret:[^}]+\}$/.test(value)) || z.string().url().safeParse(value).success,
+  { message: "Invalid url" },
+);
+
 /**
  * Tool access control fields shared by all service backends.
  * allowTools: glob patterns for tools to include (whitelist). If set, only matching tools are visible.
@@ -21,6 +26,8 @@ const accessControlFields = {
   blockTools: z.array(z.string()).optional(),
   /** Per-service tool call timeout in milliseconds. Overrides MCP2CLI_TOOL_TIMEOUT env var. */
   timeout: z.number().int().positive().optional(),
+  /** OS platforms where this service can run locally. Values match process.platform. */
+  platforms: z.array(z.string().min(1)).optional(),
   source: SourceSchema,
 };
 
@@ -55,7 +62,7 @@ export const StdioFallbackSchema = z.object({
 export const HttpServiceSchema = z.object({
   description: z.string().optional(),
   backend: z.literal("http"),
-  url: z.string().url(),
+  url: SecretRefUrlSchema,
   headers: z.record(z.string(), z.string()).optional().default({}),
   fallback: StdioFallbackSchema.optional(),
   ...accessControlFields,
@@ -69,7 +76,7 @@ export const HttpServiceSchema = z.object({
 export const WebSocketServiceSchema = z.object({
   description: z.string().optional(),
   backend: z.literal("websocket"),
-  url: z.string().url(),
+  url: SecretRefUrlSchema,
   headers: z.record(z.string(), z.string()).optional().default({}),
   fallback: StdioFallbackSchema.optional(),
   ...accessControlFields,
@@ -90,6 +97,8 @@ export const ServiceSchema = z.discriminatedUnion("backend", [
  * Requires at least one service to be configured.
  */
 export const ServicesConfigSchema = z.object({
+  importUrl: z.string().url().optional(),
+  importTtlSeconds: z.number().int().nonnegative().optional(),
   services: z
     .record(z.string(), ServiceSchema)
     .refine((obj) => Object.keys(obj).length > 0, {

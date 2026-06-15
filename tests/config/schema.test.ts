@@ -46,6 +46,18 @@ describe("StdioServiceSchema", () => {
     }
   });
 
+  test("optional platforms field is accepted", () => {
+    const result = StdioServiceSchema.safeParse({
+      backend: "stdio",
+      command: "npx",
+      platforms: ["darwin"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.platforms).toEqual(["darwin"]);
+    }
+  });
+
   test("missing command fails", () => {
     const result = StdioServiceSchema.safeParse({
       backend: "stdio",
@@ -75,6 +87,22 @@ describe("HttpServiceSchema", () => {
       expect(result.data.backend).toBe("http");
       expect(result.data.url).toBe("http://localhost:3001/mcp");
     }
+  });
+
+  test("valid http service accepts full url secret ref", () => {
+    const result = HttpServiceSchema.safeParse({
+      backend: "http",
+      url: "${secret:open-brain#url}",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("http service rejects partial url secret ref", () => {
+    const result = HttpServiceSchema.safeParse({
+      backend: "http",
+      url: "https://${secret:host}/mcp",
+    });
+    expect(result.success).toBe(false);
   });
 
   test("optional headers missing defaults to empty", () => {
@@ -154,6 +182,37 @@ describe("ServicesConfigSchema", () => {
     if (result.success) {
       expect(result.data.services.n8n).toBeDefined();
     }
+  });
+
+  test("valid config accepts importUrl and importTtlSeconds", () => {
+    const result = ServicesConfigSchema.safeParse({
+      importUrl: "http://localhost:9500/api/services/export",
+      importTtlSeconds: 0,
+      services: {
+        n8n: {
+          backend: "stdio",
+          command: "npx",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.importUrl).toBe("http://localhost:9500/api/services/export");
+      expect(result.data.importTtlSeconds).toBe(0);
+    }
+  });
+
+  test("invalid importUrl fails validation", () => {
+    const result = ServicesConfigSchema.safeParse({
+      importUrl: "not-a-url",
+      services: {
+        n8n: {
+          backend: "stdio",
+          command: "npx",
+        },
+      },
+    });
+    expect(result.success).toBe(false);
   });
 
   test("valid mixed services (stdio + http) passes", () => {

@@ -2,6 +2,9 @@
  * Pluggable auth provider interface and token-based RBAC implementation.
  * Designed for provider swap: token-based now, OAuth/OIDC later.
  */
+import { mkdir, open, rename } from "node:fs/promises";
+import { dirname, basename, join } from "node:path";
+import { randomBytes } from "node:crypto";
 import { createLogger } from "../logger/index.ts";
 
 const log = createLogger("auth-provider");
@@ -50,6 +53,7 @@ export interface TokenEntry {
   description?: string;
   username?: string;
   password?: string;
+  expiresAt?: string;
 }
 
 export interface TokensConfig {
@@ -102,6 +106,13 @@ function validateTokensConfig(raw: unknown): TokensConfig {
     if (e.password !== undefined && typeof e.password !== "string") {
       throw new Error(`Token entry ${i} ('${e.id}') has non-string password`);
     }
+    let expiresAt: string | undefined;
+    if (e.expiresAt !== undefined) {
+      if (typeof e.expiresAt !== "string" || Number.isNaN(Date.parse(e.expiresAt))) {
+        throw new Error(`Token entry ${i} ('${e.id}') has invalid expiresAt`);
+      }
+      expiresAt = e.expiresAt;
+    }
 
     tokens.push({
       id: e.id,
@@ -110,6 +121,7 @@ function validateTokensConfig(raw: unknown): TokensConfig {
       description: typeof e.description === "string" ? e.description : undefined,
       username: typeof e.username === "string" ? e.username : undefined,
       password: typeof e.password === "string" ? e.password : undefined,
+      expiresAt,
     });
   }
 
@@ -127,25 +139,42 @@ function validateTokensConfig(raw: unknown): TokensConfig {
  * Uses timing-safe comparison to prevent timing attacks.
  */
 export class TokenAuthProvider implements AuthProvider {
-  private tokenMap: Map<string, AuthContext>;
+  private tokenMap: Map<string, AuthContext & { expiresAt?: string }>;
   /** Map username -> { password, token, context } for basic auth login */
-  private userMap: Map<string, { password: string; token: string; ctx: AuthContext }>;
-  readonly enabled: boolean;
+  private userMap: Map<string, { password: string; token: string; ctx: AuthContext; expiresAt?: string }>;
+  private entries: TokenEntry[];
+  private readonly tokensPath?: string;
+  private refreshQueue: Promise<void> = Promise.resolve();
+  enabled: boolean;
 
-  constructor(entries: TokenEntry[]) {
+  constructor(entries: TokenEntry[], opts: { tokensPath?: string } = {}) {
+    this.entries = entries.map((entry) => ({ ...entry }));
+    this.tokensPath = opts.tokensPath;
     this.tokenMap = new Map();
     this.userMap = new Map();
-    for (const entry of entries) {
-      this.tokenMap.set(entry.token, { userId: entry.id, role: entry.role });
+    this.enabled = false;
+    this.rebuildMaps();
+  }
+
+  private rebuildMaps(): void {
+    this.tokenMap = new Map();
+    this.userMap = new Map();
+    for (const entry of this.entries) {
+      this.tokenMap.set(entry.token, { userId: entry.id, role: entry.role, expiresAt: entry.expiresAt });
       if (entry.username && entry.password) {
         this.userMap.set(entry.username, {
           password: entry.password,
           token: entry.token,
           ctx: { userId: entry.id, role: entry.role },
+          expiresAt: entry.expiresAt,
         });
       }
     }
     this.enabled = this.tokenMap.size > 0;
+  }
+
+  get configFilePath(): string | null {
+    return this.tokensPath ?? null;
   }
 
   authenticate(req: Request): AuthContext | null {
@@ -160,14 +189,15 @@ export class TokenAuthProvider implements AuthProvider {
     const provided = match[1]!;
 
     // Timing-safe: check against ALL tokens to prevent timing leaks
-    let found: AuthContext | null = null;
+    let found: (AuthContext & { expiresAt?: string }) | null = null;
     for (const [token, ctx] of this.tokenMap) {
       if (timingSafeEqual(provided, token)) {
         found = ctx;
       }
     }
 
-    return found;
+    if (!found || isExpired(found.expiresAt)) return null;
+    return { userId: found.userId, role: found.role };
   }
 
   /**
@@ -177,15 +207,105 @@ export class TokenAuthProvider implements AuthProvider {
    */
   authenticateBasic(username: string, password: string): { ctx: AuthContext; token: string } | null {
     // Timing-safe: always iterate all entries to prevent user-enumeration timing leaks
-    let found: { ctx: AuthContext; token: string } | null = null;
+    let found: { ctx: AuthContext; token: string; expiresAt?: string } | null = null;
     for (const [uname, entry] of this.userMap) {
       const nameMatch = timingSafeEqual(username, uname);
       const passMatch = timingSafeEqual(password, entry.password);
       if (nameMatch && passMatch) {
-        found = { ctx: entry.ctx, token: entry.token };
+        found = { ctx: entry.ctx, token: entry.token, expiresAt: entry.expiresAt };
       }
     }
+    if (found && isExpired(found.expiresAt)) return null;
     return found;
+  }
+
+  async reloadFromDisk(): Promise<void> {
+    if (!this.tokensPath) {
+      throw new Error("Token provider has no tokens file to reload");
+    }
+    const raw = await Bun.file(this.tokensPath).json();
+    const config = validateTokensConfig(raw);
+    this.entries = config.tokens.map((entry) => ({ ...entry }));
+    this.rebuildMaps();
+  }
+
+  async refreshBearerToken(
+    provided: string,
+    opts: { now?: Date; refreshWindowMs?: number; ttlMs?: number } = {},
+  ): Promise<
+    | { ok: true; token: string; expiresAt: string; userId: string; role: Role }
+    | { ok: false; status: number; message: string }
+  > {
+    return this.withRefreshLock(async () => {
+      if (!this.tokensPath) {
+        return { ok: false, status: 501, message: "Token refresh requires a tokens.json provider" };
+      }
+
+      await this.reloadFromDisk();
+      const now = opts.now ?? new Date();
+      const refreshWindowMs = opts.refreshWindowMs ?? resolveDurationEnv("MCP2CLI_TOKEN_REFRESH_WINDOW_MS", 24 * 60 * 60 * 1000);
+      const ttlMs = opts.ttlMs ?? resolveDurationEnv("MCP2CLI_TOKEN_TTL_MS", 30 * 24 * 60 * 60 * 1000);
+      let matchIndex = -1;
+
+      for (const [index, entry] of this.entries.entries()) {
+        if (timingSafeEqual(provided, entry.token)) {
+          matchIndex = index;
+        }
+      }
+
+      if (matchIndex < 0) {
+        return { ok: false, status: 401, message: "Invalid token" };
+      }
+
+      const entry = this.entries[matchIndex]!;
+      if (!entry.expiresAt) {
+        return { ok: false, status: 400, message: "Token has no expiry and is not refreshable" };
+      }
+      const expiresAtMs = Date.parse(entry.expiresAt);
+      if (expiresAtMs <= now.getTime()) {
+        return { ok: false, status: 401, message: "Token is expired" };
+      }
+      if (expiresAtMs - now.getTime() > refreshWindowMs) {
+        return { ok: false, status: 400, message: "Token is not near expiry" };
+      }
+
+      const token = `mcp2cli_${randomBytes(32).toString("base64url")}`;
+      const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
+      this.entries[matchIndex] = { ...entry, token, expiresAt };
+      await this.persistTokens();
+      this.rebuildMaps();
+
+      return { ok: true, token, expiresAt, userId: entry.id, role: entry.role };
+    });
+  }
+
+  private async withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = this.refreshQueue;
+    let release!: () => void;
+    this.refreshQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+
+  private async persistTokens(): Promise<void> {
+    if (!this.tokensPath) throw new Error("Token provider has no tokens file to write");
+    const dir = dirname(this.tokensPath);
+    await mkdir(dir, { recursive: true });
+    const tempPath = join(dir, `.${basename(this.tokensPath)}.${process.pid}.${Date.now()}.tmp`);
+    const fd = await open(tempPath, "wx", 0o600);
+    try {
+      await fd.writeFile(JSON.stringify({ tokens: this.entries }, null, 2) + "\n");
+      await fd.sync();
+    } finally {
+      await fd.close();
+    }
+    await rename(tempPath, this.tokensPath);
   }
 
   /**
@@ -212,7 +332,7 @@ export class TokenAuthProvider implements AuthProvider {
         const raw = await file.json();
         const config = validateTokensConfig(raw);
         log.info("tokens_loaded", { path, count: config.tokens.length });
-        return new TokenAuthProvider(config.tokens);
+        return new TokenAuthProvider(config.tokens, { tokensPath: path });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log.error("tokens_load_failed", { path, error: msg });
@@ -240,6 +360,17 @@ function getTokensPath(): string {
   }
   const home = process.env.HOME ?? "";
   return `${home}/.config/mcp2cli/tokens.json`;
+}
+
+function isExpired(expiresAt: string | undefined): boolean {
+  return expiresAt !== undefined && Date.parse(expiresAt) <= Date.now();
+}
+
+function resolveDurationEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 /** Timing-safe string comparison. */

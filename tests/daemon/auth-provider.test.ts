@@ -90,6 +90,20 @@ describe("TokenAuthProvider", () => {
     });
     expect(provider.authenticate(req)).not.toBeNull();
   });
+
+  test("rejects expired bearer tokens", () => {
+    const provider = new TokenAuthProvider([
+      { ...ADMIN_TOKEN, expiresAt: "2020-01-01T00:00:00.000Z" },
+    ]);
+    expect(provider.authenticate(makeReq("/call", "POST", "admin-secret"))).toBeNull();
+  });
+
+  test("accepts unexpired bearer tokens", () => {
+    const provider = new TokenAuthProvider([
+      { ...ADMIN_TOKEN, expiresAt: "2999-01-01T00:00:00.000Z" },
+    ]);
+    expect(provider.authenticate(makeReq("/call", "POST", "admin-secret"))?.userId).toBe("rico");
+  });
 });
 
 describe("TokenAuthProvider.authenticateBasic", () => {
@@ -242,6 +256,132 @@ describe("TokenAuthProvider.load", () => {
     }));
     process.env.MCP2CLI_TOKENS_FILE = tokensPath;
     expect(TokenAuthProvider.load()).rejects.toThrow("invalid role");
+  });
+
+  test("rejects invalid expiresAt", async () => {
+    const tokensPath = join(tmpDir, "tokens.json");
+    await Bun.write(tokensPath, JSON.stringify({
+      tokens: [{ id: "x", token: "t", role: "admin", expiresAt: "not-a-date" }],
+    }));
+    process.env.MCP2CLI_TOKENS_FILE = tokensPath;
+    expect(TokenAuthProvider.load()).rejects.toThrow("invalid expiresAt");
+  });
+});
+
+describe("TokenAuthProvider token refresh", () => {
+  let tmpDir: string;
+  let tokensPath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "mcp2cli-auth-refresh-test-"));
+    tokensPath = join(tmpDir, "tokens.json");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("refreshes a valid near-expiry token, persists it, and rejects the old token", async () => {
+    const now = new Date();
+    await Bun.write(tokensPath, JSON.stringify({
+      tokens: [{
+        id: "skippy",
+        token: "old-token",
+        role: "agent",
+        expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+      }],
+    }));
+
+    const provider = await TokenAuthProvider.load(tokensPath);
+    const result = await provider.refreshBearerToken("old-token", {
+      now,
+      refreshWindowMs: 10 * 60 * 1000,
+      ttlMs: 60 * 60 * 1000,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.token).not.toBe("old-token");
+    expect(provider.authenticate(makeReq("/call", "POST", "old-token"))).toBeNull();
+    expect(provider.authenticate(makeReq("/call", "POST", result.token))?.userId).toBe("skippy");
+
+    const onDisk = await Bun.file(tokensPath).json() as { tokens: Array<{ token: string; expiresAt: string }> };
+    expect(onDisk.tokens[0]!.token).toBe(result.token);
+    expect(onDisk.tokens[0]!.expiresAt).toBe(result.expiresAt);
+  });
+
+  test("does not refresh tokens that are not near expiry", async () => {
+    const now = new Date();
+    await Bun.write(tokensPath, JSON.stringify({
+      tokens: [{
+        id: "skippy",
+        token: "still-fresh",
+        role: "agent",
+        expiresAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+      }],
+    }));
+
+    const provider = await TokenAuthProvider.load(tokensPath);
+    const result = await provider.refreshBearerToken("still-fresh", {
+      now,
+      refreshWindowMs: 10 * 60 * 1000,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 400,
+      message: "Token is not near expiry",
+    });
+  });
+
+  test("serializes concurrent refresh requests for the same token", async () => {
+    const now = new Date();
+    await Bun.write(tokensPath, JSON.stringify({
+      tokens: [{
+        id: "skippy",
+        token: "old-token",
+        role: "agent",
+        expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+      }],
+    }));
+
+    const provider = await TokenAuthProvider.load(tokensPath);
+    const results = await Promise.all([
+      provider.refreshBearerToken("old-token", {
+        now,
+        refreshWindowMs: 10 * 60 * 1000,
+        ttlMs: 60 * 60 * 1000,
+      }),
+      provider.refreshBearerToken("old-token", {
+        now,
+        refreshWindowMs: 10 * 60 * 1000,
+        ttlMs: 60 * 60 * 1000,
+      }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    const onDisk = await Bun.file(tokensPath).json() as { tokens: Array<{ token: string }> };
+    const successful = results.find((result) => result.ok);
+    expect(successful?.ok).toBe(true);
+    if (successful?.ok) {
+      expect(onDisk.tokens[0]!.token).toBe(successful.token);
+    }
+  });
+
+  test("reloadFromDisk picks up edited token files", async () => {
+    await Bun.write(tokensPath, JSON.stringify({
+      tokens: [{ id: "skippy", token: "before", role: "agent" }],
+    }));
+    const provider = await TokenAuthProvider.load(tokensPath);
+    expect(provider.authenticate(makeReq("/call", "POST", "before"))?.userId).toBe("skippy");
+
+    await Bun.write(tokensPath, JSON.stringify({
+      tokens: [{ id: "rico", token: "after", role: "admin" }],
+    }));
+    await provider.reloadFromDisk();
+
+    expect(provider.authenticate(makeReq("/call", "POST", "before"))).toBeNull();
+    expect(provider.authenticate(makeReq("/call", "POST", "after"))?.userId).toBe("rico");
   });
 });
 

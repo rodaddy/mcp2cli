@@ -105,7 +105,10 @@ describe("Daemon Observability", () => {
   });
 
   /** Create a daemon server bound to a unique unix socket in tempDir */
-  function makeServer(pool: InstanceType<typeof ConnectionPool>) {
+  function makeServer(
+    pool: InstanceType<typeof ConnectionPool>,
+    authProvider = new TokenAuthProvider([]),
+  ) {
     const socketPath = join(tempDir, `test-${Date.now()}.sock`);
     const idleTimer = new IdleTimer(60000, () => {});
     const server = createDaemonServer({
@@ -114,7 +117,7 @@ describe("Daemon Observability", () => {
       config: testConfig,
       idleTimer,
       onShutdown: () => {},
-      authProvider: new TokenAuthProvider([]),
+      authProvider,
       metrics: new MetricsCollector(),
     });
     servers.push(server);
@@ -132,8 +135,8 @@ describe("Daemon Observability", () => {
 
       expect(body.status).toBe("ok");
       expect(body.uptime).toBeDefined();
-      expect(body.configuredServices).toBeDefined();
-      expect(body.connectedServices).toBeDefined();
+      expect(body.configuredServices).toBeUndefined();
+      expect(body.connectedServices).toBeUndefined();
       expect(body.activeConnections).toBeDefined();
 
       // Memory stats
@@ -173,6 +176,169 @@ describe("Daemon Observability", () => {
       // Response shape: { success: true, result: ... }
       expect(body.success).toBe(true);
       expect("result" in body).toBe(true);
+
+      await pool.closeAll();
+    });
+
+    test("authenticated /call logs caller identity and role", async () => {
+      setLogLevel("info");
+
+      const pool = new ConnectionPool();
+      const server = makeServer(
+        pool,
+        new TokenAuthProvider([{ id: "skippy", token: "agent-token", role: "agent" }]),
+      );
+
+      const lines = await captureStderrAsync(async () => {
+        const req = new Request("http://localhost/call", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer agent-token",
+          },
+          body: JSON.stringify({
+            service: "test-svc",
+            tool: "my-tool",
+            params: {},
+          }),
+        });
+        await server.fetch(req);
+      });
+
+      const responseLines = parseLogEntries(lines).filter(
+        (e) =>
+          e.component === "daemon:request" && e.message === "response_out",
+      );
+
+      expect(responseLines.length).toBeGreaterThanOrEqual(1);
+      const entry = responseLines[0]!;
+      expect(entry.data?.userId).toBe("skippy");
+      expect(entry.data?.role).toBe("agent");
+
+      await pool.closeAll();
+    });
+
+    test("per-caller metrics are hidden from public /metrics by default and exposed through user API", async () => {
+      const pool = new ConnectionPool();
+      const server = makeServer(
+        pool,
+        new TokenAuthProvider([{ id: "skippy", token: "agent-token", role: "agent" }]),
+      );
+
+      const callReq = new Request("http://localhost/call", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer agent-token",
+        },
+        body: JSON.stringify({
+          service: "test-svc",
+          tool: "my-tool",
+          params: {},
+        }),
+      });
+      await server.fetch(callReq);
+
+      const metricsRes = await server.fetch(new Request("http://localhost/metrics", { method: "GET" }));
+      const metricsBody = await metricsRes.text();
+      expect(metricsBody).toContain('mcp2cli_requests_total{service="test-svc",tool="my-tool"} 1');
+      expect(metricsBody).not.toContain('caller="skippy"');
+
+      const userRes = await server.fetch(
+        new Request("http://localhost/api/metrics/user/skippy", {
+          method: "GET",
+          headers: { Authorization: "Bearer agent-token" },
+        }),
+      );
+      expect(userRes.status).toBe(200);
+      const userBody = (await userRes.json()) as {
+        success: boolean;
+        userId: string;
+        totalRequests: number;
+        errorCount: number;
+        requests: Array<{ service: string; tool: string; count: number }>;
+      };
+      expect(userBody.success).toBe(true);
+      expect(userBody.userId).toBe("skippy");
+      expect(userBody.totalRequests).toBe(1);
+      expect(userBody.errorCount).toBe(0);
+      expect(userBody.requests).toEqual([
+        expect.objectContaining({ service: "test-svc", tool: "my-tool", count: 1 }),
+      ]);
+
+      await pool.closeAll();
+    });
+
+    test("per-caller metrics can be explicitly enabled for /metrics", async () => {
+      const original = process.env.MCP2CLI_METRICS_INCLUDE_CALLER;
+      process.env.MCP2CLI_METRICS_INCLUDE_CALLER = "1";
+      const pool = new ConnectionPool();
+      const server = makeServer(
+        pool,
+        new TokenAuthProvider([{ id: "skippy", token: "agent-token", role: "agent" }]),
+      );
+
+      try {
+        await server.fetch(new Request("http://localhost/call", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer agent-token",
+          },
+          body: JSON.stringify({
+            service: "test-svc",
+            tool: "my-tool",
+            params: {},
+          }),
+        }));
+
+        const metricsRes = await server.fetch(new Request("http://localhost/metrics", { method: "GET" }));
+        const metricsBody = await metricsRes.text();
+        expect(metricsBody).toContain('mcp2cli_requests_total{service="test-svc",tool="my-tool",caller="skippy"} 1');
+        expect(metricsBody).toContain('mcp2cli_request_duration_ms_count{service="test-svc",tool="my-tool",caller="skippy"} 1');
+      } finally {
+        if (original === undefined) {
+          delete process.env.MCP2CLI_METRICS_INCLUDE_CALLER;
+        } else {
+          process.env.MCP2CLI_METRICS_INCLUDE_CALLER = original;
+        }
+        await pool.closeAll();
+      }
+    });
+
+    test("non-admin callers cannot read another user's metrics", async () => {
+      const pool = new ConnectionPool();
+      const server = makeServer(
+        pool,
+        new TokenAuthProvider([
+          { id: "skippy", token: "agent-token", role: "agent" },
+          { id: "rico", token: "admin-token", role: "admin" },
+        ]),
+      );
+
+      const denied = await server.fetch(
+        new Request("http://localhost/api/metrics/user/rico", {
+          method: "GET",
+          headers: { Authorization: "Bearer agent-token" },
+        }),
+      );
+      expect(denied.status).toBe(403);
+
+      const allowed = await server.fetch(
+        new Request("http://localhost/api/metrics/user/skippy", {
+          method: "GET",
+          headers: { Authorization: "Bearer agent-token" },
+        }),
+      );
+      expect(allowed.status).toBe(200);
+
+      const adminAllowed = await server.fetch(
+        new Request("http://localhost/api/metrics/user/skippy", {
+          method: "GET",
+          headers: { Authorization: "Bearer admin-token" },
+        }),
+      );
+      expect(adminAllowed.status).toBe(200);
 
       await pool.closeAll();
     });
