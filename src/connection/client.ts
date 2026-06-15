@@ -1,10 +1,9 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { McpTransport } from "./transport.ts";
 import { ConnectionError } from "./errors.ts";
+import { createMcpClient } from "./capabilities.ts";
 import type { ConnectionOptions, McpConnection } from "./types.ts";
 import type { StdioService } from "../config/schema.ts";
 import { createLogger } from "../logger/index.ts";
-import pkg from "../../package.json" with { type: "json" };
 
 const log = createLogger("connection");
 
@@ -27,7 +26,7 @@ export async function connectToService(
   };
 
   const transport = new McpTransport(connOpts);
-  const client = new Client({ name: "mcp2cli", version: pkg.version });
+  const client = createMcpClient();
 
   const cmdLabel = `${service.command} ${service.args.join(" ")}`;
 
