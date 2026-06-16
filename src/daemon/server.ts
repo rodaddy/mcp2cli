@@ -38,6 +38,16 @@ import pkg from "../../package.json" with { type: "json" };
 const log = createLogger("server");
 const reqLog = createLogger("daemon:request");
 
+class MissingServiceCredentialError extends ConnectionError {
+  constructor(service: string, userId: string) {
+    super(
+      `No per-identity credentials configured for service '${service}' and caller '${userId}'`,
+      "requiresCredentials is enabled for this service",
+    );
+    this.name = "MissingServiceCredentialError";
+  }
+}
+
 interface DaemonServerOptions {
   listenConfig: DaemonListenConfig;
   pool: ConnectionPool;
@@ -96,6 +106,10 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           serviceConfigOverride: mergeCredentials(baseCfg, resolved.credential, caller),
         };
       }
+    }
+
+    if (baseCfg?.requiresCredentials) {
+      throw new MissingServiceCredentialError(service, authContext?.userId ?? "anonymous");
     }
 
     if (caller && baseCfg && hasCallerTemplates(baseCfg)) {

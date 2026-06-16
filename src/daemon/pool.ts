@@ -241,7 +241,9 @@ export class ConnectionPool {
       ),
     ]);
 
-    const names = Object.keys(config.services);
+    const names = Object.entries(config.services)
+      .filter(([, service]) => service.preconnect !== false && service.requiresCredentials !== true)
+      .map(([name]) => name);
     log.info("preconnect_start", { count: names.length });
 
     const allResults: PromiseSettledResult<McpConnection>[] = [];
@@ -270,11 +272,12 @@ export class ConnectionPool {
    */
   private async connectWebSocketWithFallback(
     serviceName: string,
-    baseService: string,
+    _baseService: string,
     serviceConfig: WebSocketService,
   ): Promise<McpConnection> {
     const hasFallback = !!serviceConfig.fallback;
-    const attemptWs = await shouldAttemptHttp(baseService);
+    const circuitKey = serviceName;
+    const attemptWs = await shouldAttemptHttp(circuitKey);
 
     if (!attemptWs) {
       if (hasFallback) {
@@ -292,10 +295,10 @@ export class ConnectionPool {
 
     try {
       const connection = await connectToWebSocketService(serviceConfig);
-      await recordSuccess(baseService);
+      await recordSuccess(circuitKey);
       return connection;
     } catch (err) {
-      await recordFailure(baseService);
+      await recordFailure(circuitKey);
       const message = err instanceof Error ? err.message : String(err);
 
       if (hasFallback) {
@@ -326,8 +329,8 @@ export class ConnectionPool {
     return connectToService({
       backend: "stdio" as const,
       command: fb.command,
-      args: fb.args,
-      env: fb.env,
+      args: fb.args ?? [],
+      env: fb.env ?? {},
     });
   }
 
@@ -340,11 +343,12 @@ export class ConnectionPool {
    */
   private async connectHttpWithFallback(
     serviceName: string,
-    baseService: string,
+    _baseService: string,
     serviceConfig: HttpService,
   ): Promise<McpConnection> {
     const hasFallback = !!serviceConfig.fallback;
-    const attemptHttp = await shouldAttemptHttp(baseService);
+    const circuitKey = serviceName;
+    const attemptHttp = await shouldAttemptHttp(circuitKey);
 
     // Circuit is open -- skip HTTP entirely
     if (!attemptHttp) {
@@ -365,10 +369,10 @@ export class ConnectionPool {
     // Attempt HTTP connection
     try {
       const connection = await connectToHttpService(serviceConfig);
-      await recordSuccess(baseService);
+      await recordSuccess(circuitKey);
       return connection;
     } catch (err) {
-      await recordFailure(baseService);
+      await recordFailure(circuitKey);
       const message = err instanceof Error ? err.message : String(err);
 
       if (hasFallback) {
@@ -401,8 +405,8 @@ export class ConnectionPool {
     return connectToService({
       backend: "stdio" as const,
       command: fb.command,
-      args: fb.args,
-      env: fb.env,
+      args: fb.args ?? [],
+      env: fb.env ?? {},
     });
   }
 

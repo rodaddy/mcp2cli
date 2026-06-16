@@ -85,7 +85,7 @@ export function printHelp(args?: string[]): void {
           {
             name: "credentials",
             description: "Manage per-identity credential mappings for backend services",
-            usage: "mcp2cli credentials <list|set|set-default|remove|remove-default|resolve|group|reload>",
+            usage: "mcp2cli credentials <list|set|set-default|remove|remove-default|resolve|group|reload|bootstrap-open-brain>",
             subcommands: [
               { name: "list [identity]", description: "List all credentials or filter by identity" },
               { name: "set <identity> <service> --header 'K: V' [--env 'K=V']", description: "Set credentials for an identity on a service" },
@@ -99,6 +99,7 @@ export function printHelp(args?: string[]): void {
               { name: "group remove <name>", description: "Remove a credential group" },
               { name: "group remove-members <name> <members...>", description: "Remove members from a group" },
               { name: "reload", description: "Reload credentials from disk" },
+              { name: "bootstrap-open-brain [--item name] [--force]", description: "Populate Open Brain per-identity credentials from a Vaultwarden item" },
             ],
           },
         ],
@@ -141,6 +142,7 @@ export function printHelp(args?: string[]): void {
       "    credentials remove <identity> <service>            Remove identity credential",
       "    credentials remove-default <service>               Remove default credential",
       "    credentials resolve <userId> <service>             Show effective credential",
+      "    credentials bootstrap-open-brain [--item name] [--force]",
       "    credentials group list                             List groups",
       "    credentials group add <name> <member...>           Create group",
       "    credentials group add-members <name> <member...>   Add to group",

@@ -58,6 +58,30 @@ describe("StdioServiceSchema", () => {
     }
   });
 
+  test("identity-safety fields parse and remain optional", () => {
+    const result = HttpServiceSchema.safeParse({
+      backend: "http",
+      url: "http://localhost:3001/mcp",
+      requiresCredentials: true,
+      preconnect: false,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.requiresCredentials).toBe(true);
+      expect(result.data.preconnect).toBe(false);
+    }
+
+    const optional = HttpServiceSchema.safeParse({
+      backend: "http",
+      url: "http://localhost:3001/mcp",
+    });
+    expect(optional.success).toBe(true);
+    if (optional.success) {
+      expect(optional.data.requiresCredentials).toBeUndefined();
+      expect(optional.data.preconnect).toBeUndefined();
+    }
+  });
+
   test("missing command fails", () => {
     const result = StdioServiceSchema.safeParse({
       backend: "stdio",

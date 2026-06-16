@@ -28,6 +28,18 @@ const accessControlFields = {
   timeout: z.number().int().positive().optional(),
   /** OS platforms where this service can run locally. Values match process.platform. */
   platforms: z.array(z.string().min(1)).optional(),
+  /**
+   * Require a per-identity credential before connecting this service through
+   * the daemon. This is for identity-sensitive services whose backend bearer
+   * token determines data ownership, such as Open Brain namespaces.
+   */
+  requiresCredentials: z.boolean().optional(),
+  /**
+   * Whether daemon startup preconnect should open a base connection for this
+   * service. Defaults to true. Set false for services that require per-user
+   * credentials so the unauthenticated base service is never probed.
+   */
+  preconnect: z.boolean().optional(),
   source: SourceSchema,
 };
 
