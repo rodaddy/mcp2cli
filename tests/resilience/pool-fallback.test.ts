@@ -173,6 +173,81 @@ describe("pool HTTP with fallback", () => {
     expect(mockConnectToHttpService).not.toHaveBeenCalled();
   });
 
+  test("credential-scoped connection does not inherit base service open circuit", async () => {
+    const openState: CircuitBreakerState = {
+      state: "open",
+      failureCount: 5,
+      lastFailureAt: new Date().toISOString(),
+      openedAt: new Date().toISOString(),
+      lastSuccessAt: null,
+    };
+    await saveState("open-brain", openState);
+
+    const config: ServicesConfig = {
+      services: {
+        "open-brain": {
+          backend: "http",
+          url: "http://brain.example/mcp",
+          headers: {},
+          requiresCredentials: true,
+        },
+      },
+    };
+
+    const pool = new ConnectionPool();
+    await pool.getConnection(
+      "credential:rico",
+      config,
+      {
+        backend: "http",
+        url: "http://brain.example/mcp",
+        headers: { Authorization: "Bearer rico" },
+        requiresCredentials: true,
+      },
+      "open-brain",
+    );
+
+    expect(mockConnectToHttpService).toHaveBeenCalledTimes(1);
+  });
+
+  test("credential-scoped failure records circuit state on credential key only", async () => {
+    mockConnectToHttpService.mockImplementation(async () => {
+      throw new Error("SSE error: Non-200 status code (401)");
+    });
+
+    const config: ServicesConfig = {
+      services: {
+        "open-brain": {
+          backend: "http",
+          url: "http://brain.example/mcp",
+          headers: {},
+          requiresCredentials: true,
+        },
+      },
+    };
+
+    const pool = new ConnectionPool();
+    await expect(
+      pool.getConnection(
+        "credential:bad-token",
+        config,
+        {
+          backend: "http",
+          url: "http://brain.example/mcp",
+          headers: { Authorization: "Bearer bad" },
+          requiresCredentials: true,
+        },
+        "open-brain",
+      ),
+    ).rejects.toThrow("SSE error");
+
+    const { loadState } = await import("../../src/resilience/index.ts");
+    const baseState = await loadState("open-brain");
+    const credentialState = await loadState("credential:bad-token");
+    expect(baseState.failureCount).toBe(0);
+    expect(credentialState.failureCount).toBe(1);
+  });
+
   test("fallback receives correct stdio config from fallback field", async () => {
     mockConnectToHttpService.mockImplementation(async () => {
       throw new Error("Gateway down");

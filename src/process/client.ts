@@ -434,6 +434,9 @@ async function fetchDaemon(
       if (isRemoteAuthError(err)) {
         throw err;
       }
+      if (serviceName && await isIdentitySensitiveService(serviceName)) {
+        throw err;
+      }
       return await fetchLocal(path, body);
     }
   } catch (err) {
@@ -451,6 +454,18 @@ async function fetchDaemon(
 
 function isRemoteAuthError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith("Remote auth failed");
+}
+
+async function isIdentitySensitiveService(serviceName: string): Promise<boolean> {
+  try {
+    const config = await getLocalConfig();
+    if (!config) {
+      return false;
+    }
+    return config.services[serviceName]?.requiresCredentials === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
