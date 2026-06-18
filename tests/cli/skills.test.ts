@@ -290,6 +290,57 @@ describe("skills list", () => {
     }
   });
 
+  test("uses access-filtered cache surface for stale detection", async () => {
+    const tools = [makeTool("allowed_tool", "Allowed"), makeTool("blocked_tool", "Blocked")];
+    await writeCache("test-svc", tools);
+
+    const { computeSchemaHash } = await import("../../src/generation/skill-hash.ts");
+    const expectedHash = await computeSchemaHash([tools[0]!]);
+
+    const skillContent = [
+      "---",
+      "name: test-svc",
+      "tool_count: 1",
+      "generated_at: 2025-01-01T00:00:00.000Z",
+      `schema_hash: ${expectedHash}`,
+      "triggers:",
+      "  - test-svc",
+      "---",
+      "",
+      "# test-svc",
+    ].join("\n");
+    await writeSkillFile("test-svc", skillContent);
+
+    const origConfig = process.env.MCP2CLI_CONFIG;
+    const configPath = join(testDir, "services.json");
+    await Bun.write(configPath, JSON.stringify({
+      services: {
+        "test-svc": {
+          backend: "stdio",
+          command: "echo",
+          args: [],
+          allowTools: ["allowed_*"],
+        },
+      },
+    }));
+    process.env.MCP2CLI_CONFIG = configPath;
+
+    try {
+      const { stdout } = await captureSkills(["list"]);
+      expect(stdout).toContain("test-svc");
+      expect(stdout).toContain("ok");
+      expect(stdout).toContain("1 tools");
+      expect(stdout).not.toContain("stale");
+      expect(stdout).not.toContain("cache has 2");
+    } finally {
+      if (origConfig !== undefined) {
+        process.env.MCP2CLI_CONFIG = origConfig;
+      } else {
+        delete process.env.MCP2CLI_CONFIG;
+      }
+    }
+  });
+
   // L11: Test --json output
   test("outputs JSON when --json flag is passed via args", async () => {
     const origConfig = process.env.MCP2CLI_CONFIG;

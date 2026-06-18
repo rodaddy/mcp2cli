@@ -4,6 +4,7 @@
  */
 import { loadConfig } from "../../config/index.ts";
 import { listCachedServices, readCacheRaw } from "../../cache/index.ts";
+import { extractPolicy, filterTools } from "../../access/filter.ts";
 import { resolveOutputDir } from "../../generation/file-manager.ts";
 import { computeSchemaHash } from "../../generation/skill-hash.ts";
 import { validateIdentifier } from "../../validation/pipelines.ts";
@@ -103,10 +104,13 @@ async function handleSkillsList(args: string[]): Promise<void> {
 
     if (!exists) {
       const cached = cachedServices.includes(name) ? await readCacheRaw(name) : null;
+      const visibleCachedTools = cached
+        ? filterTools(cached.tools, extractPolicy(config.services[name]!))
+        : null;
       statuses.push({
         service: name,
         status: "missing",
-        cachedToolCount: cached?.tools.length,
+        cachedToolCount: visibleCachedTools?.length,
       });
       continue;
     }
@@ -118,11 +122,14 @@ async function handleSkillsList(args: string[]): Promise<void> {
     const existingHash = hashMatch?.[1];
 
     const cached = cachedServices.includes(name) ? await readCacheRaw(name) : null;
+    const visibleCachedTools = cached
+      ? filterTools(cached.tools, extractPolicy(config.services[name]!))
+      : null;
     let isStale = false;
     let toolCount: number | undefined;
 
-    if (cached) {
-      const cacheHash = await computeSchemaHash(cached.tools);
+    if (visibleCachedTools) {
+      const cacheHash = await computeSchemaHash(visibleCachedTools);
       isStale = existingHash !== cacheHash;
     }
 
@@ -134,7 +141,7 @@ async function handleSkillsList(args: string[]): Promise<void> {
       service: name,
       status: isStale ? "stale" : "generated",
       toolCount,
-      cachedToolCount: cached?.tools.length,
+      cachedToolCount: visibleCachedTools?.length,
       schemaHash: existingHash,
       path: skillDir,
     });
