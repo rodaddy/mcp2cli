@@ -671,6 +671,23 @@ mcp2cli generate-skills n8n
 
 Manual edits inside `MANUAL:START` / `MANUAL:END` markers are preserved across regeneration. When schema drift is detected (via the caching layer), skill regeneration can be triggered automatically.
 
+For Open Brain MCP changes, use the registry-backed path rather than directly
+refreshing a local daemon as the release proof:
+
+```bash
+# First land any required registry/config/process update in rodaddy/rtech-mcps.
+# Then make mcp2cli pull the registry-backed service definition and refresh live schemas.
+mcp2cli cache diff open-brain
+mcp2cli cache warm open-brain
+mcp2cli generate-skills open-brain --conflict=merge
+mcp2cli open-brain --help
+```
+
+Local validation should use an isolated temporary `MCP2CLI_HOME`/config/cache so
+tests cannot mutate the operator's real local `~/.config/mcp2cli` state. Final
+verification should run against the hosted daemon and prove the new tools are
+visible and callable there.
+
 ## Additional Environment Variables
 
 | Variable | Default | Description |
