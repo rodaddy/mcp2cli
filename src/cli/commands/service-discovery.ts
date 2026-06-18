@@ -4,9 +4,9 @@ import { connectToHttpService } from "../../connection/http-transport.ts";
 import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
 import { hashToolSchema } from "../../cache/index.ts";
 import type { CachedToolSchema } from "../../cache/index.ts";
-import { listToolsViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { listAllTools } from "../../schema/introspect.ts";
 import type { SchemaOutput, ToolSummary } from "../../schema/types.ts";
+import { listToolsViaDaemon, getSchemaViaDaemon } from "./daemon-schema-client.ts";
 import { resolveDirectServiceConfig } from "./direct-service.ts";
 
 export interface ServiceDiscoveryResult {

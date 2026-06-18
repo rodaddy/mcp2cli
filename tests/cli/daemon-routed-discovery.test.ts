@@ -27,7 +27,7 @@ const getSchemaViaDaemon = mock(async ({ tool }: { service: string; tool: string
   },
 }));
 
-mock.module("../../src/process/index.ts", () => ({
+mock.module("../../src/cli/commands/daemon-schema-client.ts", () => ({
   listToolsViaDaemon,
   getSchemaViaDaemon,
 }));
