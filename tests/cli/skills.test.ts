@@ -67,7 +67,9 @@ async function captureSkills(args: string[]): Promise<{ stdout: string; exitCode
     console.log = origLog;
     console.error = origErr;
   }
-  return { stdout: lines.join("\n"), exitCode: process.exitCode ?? 0 };
+  const exitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  return { stdout: lines.join("\n"), exitCode };
 }
 
 describe("skills command", () => {

@@ -2,14 +2,11 @@
  * Handle `mcp2cli cache <subcommand>` -- manage schema cache.
  * Supports: clear [service], status, diff <service>
  */
-import { clearCache, listCachedServices, readCacheRaw, detectDrift, resolveTtlMs, writeCache, mapToolsToCachedSchemas } from "../../cache/index.ts";
+import { clearCache, listCachedServices, readCacheRaw, detectDrift, resolveTtlMs, writeCache } from "../../cache/index.ts";
 import { loadConfig } from "../../config/index.ts";
-import { connectToService } from "../../connection/index.ts";
-import { connectToHttpService } from "../../connection/http-transport.ts";
-import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
-import { listAllTools } from "../../schema/introspect.ts";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { CommandHandler } from "../../types/index.ts";
+import { discoverServiceSchemas } from "./service-discovery.ts";
 
 export const handleCache: CommandHandler = async (args: string[]) => {
   const subcommand = args[0];
@@ -84,16 +81,8 @@ async function handleCacheDiff(args: string[]): Promise<void> {
     return;
   }
 
-  const connection = service.backend === "http"
-    ? await connectToHttpService(service)
-    : service.backend === "websocket"
-      ? await connectToWebSocketService(service)
-      : await connectToService(service);
-
   try {
-    const rawTools = await listAllTools(connection.client);
-    const liveSchemas = await mapToolsToCachedSchemas(rawTools);
-
+    const { cachedSchemas: liveSchemas } = await discoverServiceSchemas(serviceName, service);
     const drift = detectDrift(serviceName, cached.tools, liveSchemas, cached.metadata.cachedAt);
 
     if (!drift.hasDrift) {
@@ -113,8 +102,9 @@ async function handleCacheDiff(args: string[]): Promise<void> {
     // Update cache with live data
     await writeCache(serviceName, liveSchemas, resolveTtlMs());
     process.exitCode = EXIT_CODES.SUCCESS;
-  } finally {
-    await connection.close();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = EXIT_CODES.CONNECTION;
   }
 }
 
@@ -142,20 +132,9 @@ async function handleCacheWarm(args: string[]): Promise<void> {
     try {
       const result = await Promise.race([
         (async () => {
-          const connection = service.backend === "http"
-            ? await connectToHttpService(service)
-            : service.backend === "websocket"
-              ? await connectToWebSocketService(service)
-              : await connectToService(service);
-
-          try {
-            const rawTools = await listAllTools(connection.client);
-            const schemas = await mapToolsToCachedSchemas(rawTools);
-            await writeCache(serviceName, schemas, resolveTtlMs());
-            return schemas.length;
-          } finally {
-            await connection.close();
-          }
+          const { cachedSchemas } = await discoverServiceSchemas(serviceName, service);
+          await writeCache(serviceName, cachedSchemas, resolveTtlMs());
+          return cachedSchemas.length;
         })(),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`timed out after ${PER_SERVICE_TIMEOUT}ms`)), PER_SERVICE_TIMEOUT),

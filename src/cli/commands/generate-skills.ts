@@ -1,10 +1,6 @@
 import { printError } from "../errors.ts";
 import { loadConfig, getConfigPath } from "../../config/index.ts";
 import { ConfigError } from "../../config/errors.ts";
-import { connectToService } from "../../connection/client.ts";
-import { connectToHttpService } from "../../connection/http-transport.ts";
-import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
-import { listToolsForService, getToolSchema } from "../../schema/introspect.ts";
 import {
   detectPrefixGroups,
   generateSkillMd,
@@ -26,6 +22,7 @@ import type { SchemaOutput } from "../../schema/types.ts";
 import type { ToolSummary } from "../../schema/types.ts";
 import { join } from "node:path";
 import { computeSchemaHash } from "../../generation/skill-hash.ts";
+import { discoverServiceSchemas } from "./service-discovery.ts";
 
 /**
  * Extract trigger keywords from tool descriptions.
@@ -185,16 +182,10 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     return;
   }
 
-  // Connect to MCP server (stdio, http, or websocket)
-  const connection = service.backend === "http"
-    ? await connectToHttpService(service)
-    : service.backend === "websocket"
-      ? await connectToWebSocketService(service)
-      : await connectToService(service);
-
   try {
     // List all tools
-    let tools: ToolSummary[] = await listToolsForService(connection.client);
+    const discovery = await discoverServiceSchemas(serviceName, service);
+    let tools: ToolSummary[] = discovery.tools;
 
     if (tools.length === 0) {
       printError({
@@ -221,13 +212,8 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     }
 
     // Get full schemas for each tool (already filtered by access control)
-    const schemas: SchemaOutput[] = [];
-    for (const tool of tools) {
-      const schema = await getToolSchema(connection.client, tool.name, serviceName);
-      if (schema) {
-        schemas.push(schema);
-      }
-    }
+    const allowedToolNames = new Set(tools.map((tool) => tool.name));
+    const schemas: SchemaOutput[] = discovery.schemas.filter((schema) => allowedToolNames.has(schema.tool));
 
     // Group tools by prefix
     const groups = detectPrefixGroups(schemas, serviceName);
@@ -341,7 +327,7 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     };
     console.log(JSON.stringify(result));
     process.exitCode = EXIT_CODES.SUCCESS;
-  } finally {
-    await connection.close();
+  } catch (err) {
+    throw err;
   }
 };
