@@ -17,6 +17,7 @@ import type {
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
 import { listToolsCached, getToolSchemaCached, resolveToolNameCached } from "../schema/cached.ts";
+import { getToolSchema, listToolsForService } from "../schema/introspect.ts";
 import { auditToolCall, sanitizeParams } from "../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../access/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
@@ -333,7 +334,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const body = (await req.json()) as DaemonListToolsRequest;
           const { poolKey: listPoolKey, serviceConfigOverride: listServiceOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
           const conn = await pool.getConnection(listPoolKey, getConfig(), listServiceOverride, body.service);
-          const tools = await listToolsCached(conn.client, listPoolKey);
+          const tools = body.fresh
+            ? await listToolsForService(conn.client)
+            : await listToolsCached(conn.client, listPoolKey);
           return Response.json({ success: true, result: tools });
         } catch (err) {
           return handleEndpointError(err, pool);
@@ -349,11 +352,13 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const body = (await req.json()) as DaemonSchemaRequest;
           const { poolKey: schemaPoolKey, serviceConfigOverride: schemaServiceOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
           const conn = await pool.getConnection(schemaPoolKey, getConfig(), schemaServiceOverride, body.service);
-          const result = await getToolSchemaCached(
-            conn.client,
-            body.tool,
-            schemaPoolKey,
-          );
+          const result = body.fresh
+            ? await getToolSchema(conn.client, body.tool, schemaPoolKey)
+            : await getToolSchemaCached(
+              conn.client,
+              body.tool,
+              schemaPoolKey,
+            );
           if (result === null) {
             return errorResponse(
               "UNKNOWN_COMMAND",
