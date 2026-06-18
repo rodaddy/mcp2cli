@@ -34,6 +34,101 @@ export function resolveOutputDir(
 /** Tolerant regex for AUTO-GENERATED markers */
 const MARKER_START_RE = /<!--\s*AUTO-GENERATED:START\s*-->/;
 const MARKER_END_RE = /<!--\s*AUTO-GENERATED:END\s*-->/;
+const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
+
+interface FrontmatterBlock {
+  key: string;
+  lines: string[];
+}
+
+function splitFrontmatterBlocks(frontmatter: string): FrontmatterBlock[] {
+  const body = frontmatter
+    .replace(/^---\n/, "")
+    .replace(/\n---\n?$/, "");
+  const blocks: FrontmatterBlock[] = [];
+
+  for (const line of body.split("\n")) {
+    const keyMatch = line.match(/^([A-Za-z0-9_-]+):/);
+    if (keyMatch) {
+      blocks.push({ key: keyMatch[1]!, lines: [line] });
+    } else if (blocks.length > 0) {
+      blocks[blocks.length - 1]!.lines.push(line);
+    }
+  }
+
+  return blocks;
+}
+
+function triggerValues(block: FrontmatterBlock | undefined): string[] {
+  if (!block) return [];
+
+  const firstLine = block.lines[0] ?? "";
+  const inlineArrayMatch = firstLine.match(/^[A-Za-z0-9_-]+:\s*\[(.*)\]\s*$/);
+  if (inlineArrayMatch) {
+    return inlineArrayMatch[1]!
+      .split(",")
+      .map((value) => value.trim().replace(/^['"]|['"]$/g, ""))
+      .filter(Boolean);
+  }
+
+  const inlineScalarMatch = firstLine.match(/^[A-Za-z0-9_-]+:\s*(\S.*)$/);
+  if (inlineScalarMatch) {
+    return [inlineScalarMatch[1]!.trim().replace(/^['"]|['"]$/g, "")].filter(Boolean);
+  }
+
+  return block.lines
+    .slice(1)
+    .map((line) => line.match(/^\s*-\s+(.+)\s*$/)?.[1])
+    .filter((value): value is string => Boolean(value));
+}
+
+function mergeFrontmatter(existingFrontmatter: string, generatedFrontmatter: string): string {
+  const existingBlocks = splitFrontmatterBlocks(existingFrontmatter);
+  const generatedBlocks = splitFrontmatterBlocks(generatedFrontmatter);
+  const generatedKeys = new Set(generatedBlocks.map((block) => block.key));
+  const existingByKey = new Map(existingBlocks.map((block) => [block.key, block]));
+  const merged: string[] = ["---"];
+
+  for (const generatedBlock of generatedBlocks) {
+    if (generatedBlock.key === "triggers") {
+      const values = [
+        ...triggerValues(generatedBlock),
+        ...triggerValues(existingByKey.get("triggers")),
+      ];
+      const deduped = [...new Set(values)];
+      merged.push("triggers:");
+      for (const value of deduped) {
+        merged.push(`  - ${value}`);
+      }
+    } else {
+      merged.push(...generatedBlock.lines);
+    }
+  }
+
+  for (const existingBlock of existingBlocks) {
+    if (!generatedKeys.has(existingBlock.key)) {
+      merged.push(...existingBlock.lines);
+    }
+  }
+
+  merged.push("---");
+  return merged.join("\n") + "\n";
+}
+
+function mergeGeneratedFrontmatter(existing: string, generated: string): string {
+  const generatedFrontmatter = generated.match(FRONTMATTER_RE)?.[0];
+  if (!generatedFrontmatter) {
+    return existing;
+  }
+
+  if (FRONTMATTER_RE.test(existing)) {
+    return existing.replace(FRONTMATTER_RE, (existingFrontmatter) =>
+      mergeFrontmatter(existingFrontmatter, generatedFrontmatter)
+    );
+  }
+
+  return generatedFrontmatter + existing;
+}
 
 /**
  * Merge generated content into existing file content.
@@ -63,7 +158,10 @@ export function mergeContent(existing: string, generated: string): string {
   }
 
   // Replace between markers, preserving user content before and after
-  const beforeMarker = existing.slice(0, startMatch.index!);
+  const beforeMarker = mergeGeneratedFrontmatter(
+    existing.slice(0, startMatch.index!),
+    generated,
+  );
   const afterMarker = existing.slice(endMatch.index! + endMatch[0]!.length);
 
   return beforeMarker + autoContent + afterMarker;

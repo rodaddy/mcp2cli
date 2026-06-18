@@ -248,6 +248,50 @@ describe("generate-skills integration", () => {
     expect(afterContent).toContain("AUTO-GENERATED:END");
   }, 30_000);
 
+  test("conflict merge refreshes generated frontmatter metadata", async () => {
+    const { env, outputDir } = await setupTestEnv();
+
+    runCli(
+      ["generate-skills", "mock-server", `--output=${outputDir}`],
+      env,
+    );
+
+    const skillPath = join(outputDir, "SKILL.md");
+    const original = await Bun.file(skillPath).text();
+    const oldFrontmatter = [
+      "---",
+      "name: mock-server",
+      "description: MCP tools for mock-server",
+      "triggers:",
+      "  - mock-server",
+      "  - custom-trigger",
+      "x-owner: hand-edited",
+      "---",
+      "",
+    ].join("\n");
+    const withoutMetadata = original.replace(/^---\n[\s\S]*?\n---\n\n/, oldFrontmatter);
+    await Bun.write(
+      skillPath,
+      withoutMetadata + "\n## My Custom Notes\n\nThis should be preserved.\n",
+    );
+
+    const result = runCli(
+      ["generate-skills", "mock-server", `--output=${outputDir}`, "--conflict=merge"],
+      env,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const afterContent = await Bun.file(skillPath).text();
+    expect(afterContent).toContain("tool_count: 3");
+    expect(afterContent).toMatch(/^generated_at:\s*\S+/m);
+    expect(afterContent).toMatch(/^schema_hash:\s*[0-9a-f]{16}/m);
+    expect(afterContent).toContain("  - custom-trigger");
+    expect(afterContent).toContain("x-owner: hand-edited");
+    expect(afterContent).toContain("My Custom Notes");
+    expect(afterContent).toContain("This should be preserved.");
+  }, 30_000);
+
   test("missing service arg returns structured validation error", async () => {
     const { env } = await setupTestEnv();
 

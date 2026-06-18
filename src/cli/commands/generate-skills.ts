@@ -214,6 +214,7 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     // Get full schemas for each tool (already filtered by access control)
     const allowedToolNames = new Set(tools.map((tool) => tool.name));
     const schemas: SchemaOutput[] = discovery.schemas.filter((schema) => allowedToolNames.has(schema.tool));
+    const cachedSchemas = discovery.cachedSchemas.filter((schema) => allowedToolNames.has(schema.name));
 
     // Group tools by prefix
     const groups = detectPrefixGroups(schemas, serviceName);
@@ -222,8 +223,9 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     const descriptions = tools.map((t) => t.description);
     const triggerKeywords = extractTriggerKeywords(serviceName, descriptions);
 
-    // Compute schema hash from tool names + descriptions for drift detection
-    const schemaHash = await computeSchemaHash(tools);
+    // Compute schema hash from the same full-description surface that `skills list`
+    // compares against. The rendered tool table may use truncated descriptions.
+    const schemaHash = await computeSchemaHash(cachedSchemas);
 
     // H3: Only update generatedAt when the schema hash actually changes
     const outputDir = resolveOutputDir(serviceName, outputFlag);
