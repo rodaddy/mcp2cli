@@ -82,7 +82,7 @@ async function handleCacheDiff(args: string[]): Promise<void> {
   }
 
   try {
-    const { cachedSchemas: liveSchemas } = await discoverServiceSchemas(serviceName, service);
+    const { cachedSchemas: liveSchemas } = await discoverServiceSchemas(serviceName, service, { fresh: true });
     const drift = detectDrift(serviceName, cached.tools, liveSchemas, cached.metadata.cachedAt);
 
     if (!drift.hasDrift) {
@@ -132,7 +132,7 @@ async function handleCacheWarm(args: string[]): Promise<void> {
     try {
       const result = await Promise.race([
         (async () => {
-          const { cachedSchemas } = await discoverServiceSchemas(serviceName, service);
+          const { cachedSchemas } = await discoverServiceSchemas(serviceName, service, { fresh: true });
           await writeCache(serviceName, cachedSchemas, resolveTtlMs());
           return cachedSchemas.length;
         })(),

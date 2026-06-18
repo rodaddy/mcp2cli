@@ -18,9 +18,10 @@ export interface ServiceDiscoveryResult {
 export async function discoverServiceSchemas(
   serviceName: string,
   service: ServiceConfig,
+  options: { fresh?: boolean } = {},
 ): Promise<ServiceDiscoveryResult> {
   if (!process.env.MCP2CLI_NO_DAEMON) {
-    return discoverServiceSchemasViaDaemon(serviceName);
+    return discoverServiceSchemasViaDaemon(serviceName, options);
   }
 
   return discoverServiceSchemasDirect(serviceName, service);
@@ -28,8 +29,9 @@ export async function discoverServiceSchemas(
 
 async function discoverServiceSchemasViaDaemon(
   serviceName: string,
+  options: { fresh?: boolean },
 ): Promise<ServiceDiscoveryResult> {
-  const listResult = await listToolsViaDaemon({ service: serviceName });
+  const listResult = await listToolsViaDaemon({ service: serviceName, fresh: options.fresh });
   if (!listResult.success) {
     throw new Error(listResult.error.message);
   }
@@ -39,7 +41,11 @@ async function discoverServiceSchemasViaDaemon(
   const cachedSchemas: CachedToolSchema[] = [];
 
   for (const tool of tools) {
-    const schemaResult = await getSchemaViaDaemon({ service: serviceName, tool: tool.name });
+    const schemaResult = await getSchemaViaDaemon({
+      service: serviceName,
+      tool: tool.name,
+      fresh: options.fresh,
+    });
     if (!schemaResult.success) {
       throw new Error(schemaResult.error.message);
     }

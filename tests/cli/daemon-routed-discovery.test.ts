@@ -100,8 +100,13 @@ describe("daemon-routed schema discovery commands", () => {
 
     expect(output.stderr).not.toContain("direct HTTP transport should not be used");
     expect(output.stdout).toContain("open-brain: 2 tools cached");
-    expect(listToolsViaDaemon).toHaveBeenCalledWith({ service: "open-brain" });
+    expect(listToolsViaDaemon).toHaveBeenCalledWith({ service: "open-brain", fresh: true });
     expect(getSchemaViaDaemon).toHaveBeenCalledTimes(2);
+    expect(getSchemaViaDaemon).toHaveBeenCalledWith({
+      service: "open-brain",
+      tool: "search_all",
+      fresh: true,
+    });
 
     const cached = await readCacheRaw("open-brain");
     expect(cached?.tools.map((tool) => tool.name).sort()).toEqual([
@@ -123,8 +128,13 @@ describe("daemon-routed schema discovery commands", () => {
     const output = await captureOutput(() => handleCache(["diff", "open-brain"]));
 
     expect(output.stdout).toContain('Schema drift detected for "open-brain"');
-    expect(listToolsViaDaemon).toHaveBeenCalledWith({ service: "open-brain" });
+    expect(listToolsViaDaemon).toHaveBeenCalledWith({ service: "open-brain", fresh: true });
     expect(getSchemaViaDaemon).toHaveBeenCalledTimes(2);
+    expect(getSchemaViaDaemon).toHaveBeenCalledWith({
+      service: "open-brain",
+      tool: "search_all",
+      fresh: true,
+    });
   });
 
   test("generate-skills dry run uses daemon-routed discovery", async () => {
@@ -134,6 +144,10 @@ describe("daemon-routed schema discovery commands", () => {
     expect(output.stderr).not.toContain("direct HTTP transport should not be used");
     expect(listToolsViaDaemon).toHaveBeenCalledWith({ service: "open-brain" });
     expect(getSchemaViaDaemon).toHaveBeenCalledTimes(2);
+    expect(getSchemaViaDaemon).toHaveBeenCalledWith({
+      service: "open-brain",
+      tool: "search_all",
+    });
     expect(JSON.parse(output.stdout)).toMatchObject({
       dryRun: true,
       service: "open-brain",
