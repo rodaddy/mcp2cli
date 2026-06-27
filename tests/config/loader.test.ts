@@ -534,7 +534,7 @@ describe("loadConfig", () => {
 });
 
 describe("mergeImportedConfig", () => {
-  test("imported service wins and source comes from imported config", () => {
+  test("local bootstrap service wins over imported service", () => {
     const local = {
       services: {
         shared: {
@@ -559,8 +559,8 @@ describe("mergeImportedConfig", () => {
 
     const merged = mergeImportedConfig(local, imported);
     const shared = merged.services.shared!;
-    expect(shared.backend).toBe("http");
-    expect(shared.source).toBe("remote");
+    expect(shared.backend).toBe("stdio");
+    expect(shared.source).toBe("local");
   });
 
   test("imported services default to remote source", () => {
