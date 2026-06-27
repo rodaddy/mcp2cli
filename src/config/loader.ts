@@ -320,6 +320,7 @@ export function mergeImportedConfig(
   const services: ServicesConfig["services"] = structuredClone(localConfig.services);
 
   for (const [name, importedService] of Object.entries(importedConfig.services)) {
+    if (services[name]) continue;
     services[name] = structuredClone(importedService);
     services[name].source = importedService.source ?? "remote";
   }
