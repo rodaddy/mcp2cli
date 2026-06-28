@@ -4,6 +4,7 @@
  * to produce a human-readable diff showing added, removed, and modified tools.
  */
 import type { ToolSummary } from "../schema/types.ts";
+import { MARKER_START, MARKER_END } from "./templates.ts";
 
 /** Classification of a single tool change */
 export interface ToolChange {
@@ -43,7 +44,19 @@ export interface SkillDiffResult {
  */
 export function parseExistingTools(skillContent: string): ToolSummary[] {
   const tools: ToolSummary[] = [];
-  const lines = skillContent.split("\n");
+
+  // Only parse the auto-generated block. Outside it live YAML frontmatter
+  // (whose `triggers:` bullets look like flat tool entries) and the manual
+  // Notes section -- scanning those produced phantom tools and made every
+  // `--diff` report spurious removals. If the markers are absent (e.g. a
+  // pre-marker hand-authored file), fall back to scanning the whole content.
+  const startIdx = skillContent.indexOf(MARKER_START);
+  const endIdx = skillContent.indexOf(MARKER_END);
+  const scoped =
+    startIdx !== -1 && endIdx !== -1 && endIdx > startIdx
+      ? skillContent.slice(startIdx + MARKER_START.length, endIdx)
+      : skillContent;
+  const lines = scoped.split("\n");
 
   // Mode: parsing rows of a markdown table we recognized via its header.
   type TableKind = "legacy" | "groups" | null;
@@ -139,7 +152,13 @@ export function computeSkillDiff(
     const existing = existingMap.get(name);
     if (!existing) {
       added.push({ tool: name, type: "added" });
-    } else if (existing.description !== newTool.description) {
+    } else if (
+      // The slim group-index front skill stores no per-tool descriptions, so a
+      // parsed empty description means "unknown", not "changed to empty". Only
+      // flag a real description change to avoid every tool showing as modified.
+      existing.description !== "" &&
+      existing.description !== newTool.description
+    ) {
       modified.push({
         tool: name,
         type: "modified",

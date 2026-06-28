@@ -4,6 +4,7 @@ import {
   computeSkillDiff,
   formatDiffPreview,
 } from "../../src/generation/diff.ts";
+import { generateSkillMd } from "../../src/generation/templates.ts";
 
 // -- parseExistingTools --
 
@@ -113,9 +114,7 @@ describe("parseExistingTools", () => {
 
 describe("computeSkillDiff", () => {
   test("detects added tools", () => {
-    const existing = [
-      { name: "tool_a", description: "Tool A" },
-    ];
+    const existing = [{ name: "tool_a", description: "Tool A" }];
     const newTools = [
       { name: "tool_a", description: "Tool A" },
       { name: "tool_b", description: "Tool B" },
@@ -134,9 +133,7 @@ describe("computeSkillDiff", () => {
       { name: "tool_a", description: "Tool A" },
       { name: "tool_b", description: "Tool B" },
     ];
-    const newTools = [
-      { name: "tool_a", description: "Tool A" },
-    ];
+    const newTools = [{ name: "tool_a", description: "Tool A" }];
 
     const diff = computeSkillDiff("test", existing, newTools);
     expect(diff.hasChanges).toBe(true);
@@ -146,12 +143,8 @@ describe("computeSkillDiff", () => {
   });
 
   test("detects modified tools (description changed)", () => {
-    const existing = [
-      { name: "tool_a", description: "Old description" },
-    ];
-    const newTools = [
-      { name: "tool_a", description: "New description" },
-    ];
+    const existing = [{ name: "tool_a", description: "Old description" }];
+    const newTools = [{ name: "tool_a", description: "New description" }];
 
     const diff = computeSkillDiff("test", existing, newTools);
     expect(diff.hasChanges).toBe(true);
@@ -261,11 +254,74 @@ describe("formatDiffPreview", () => {
     const diff = computeSkillDiff(
       "my-service",
       [{ name: "a", description: "A" }],
-      [{ name: "a", description: "A" }, { name: "b", description: "B" }],
+      [
+        { name: "a", description: "A" },
+        { name: "b", description: "B" },
+      ],
     );
     const output = formatDiffPreview(diff);
     expect(output).toContain("Existing: 1 tools");
     expect(output).toContain("New: 2 tools");
     expect(output).toContain("my-service");
+  });
+});
+
+// -- round-trip: generated SKILL.md must diff clean against its own tools --
+// Regression guard: parseExistingTools previously scanned the whole file,
+// picking up YAML `triggers:` bullets as phantom tools (spurious "removed"),
+// and the slim group index has no descriptions, which flagged every tool as
+// "modified". Both made --diff useless for the format this generator emits.
+
+describe("generate -> parse -> diff round-trip", () => {
+  const tools = [
+    { name: "ob_search", description: "Search the brain" },
+    { name: "ob_write", description: "Write to the brain" },
+  ];
+
+  test("grouped front skill diffs clean against its own tool list", () => {
+    const md = generateSkillMd({
+      serviceName: "open-brain",
+      description: "Open Brain KB",
+      tools,
+      triggerKeywords: ["open-brain", "search", "knowledge"],
+      groups: [
+        {
+          prefix: "ob",
+          label: "Ob Operations",
+          tools: tools.map((t) => ({
+            tool: t.name,
+            description: t.description,
+            inputSchema: {},
+            usage: "",
+          })),
+          filename: "ob.md",
+        },
+      ],
+    });
+
+    const parsed = parseExistingTools(md);
+    expect(parsed.map((t) => t.name).sort()).toEqual(["ob_search", "ob_write"]);
+    // trigger keywords must NOT leak in as tools
+    expect(parsed.some((t) => t.name === "search")).toBe(false);
+
+    const diff = computeSkillDiff("open-brain", parsed, tools);
+    expect(diff.hasChanges).toBe(false);
+    expect(diff.removed).toHaveLength(0);
+    expect(diff.added).toHaveLength(0);
+    expect(diff.modified).toHaveLength(0);
+  });
+
+  test("flat fallback front skill diffs clean against its own tool list", () => {
+    const md = generateSkillMd({
+      serviceName: "svc",
+      description: "Flat service",
+      tools,
+      triggerKeywords: ["svc", "flat"],
+    });
+
+    const parsed = parseExistingTools(md);
+    expect(parsed.map((t) => t.name).sort()).toEqual(["ob_search", "ob_write"]);
+    const diff = computeSkillDiff("svc", parsed, tools);
+    expect(diff.hasChanges).toBe(false);
   });
 });

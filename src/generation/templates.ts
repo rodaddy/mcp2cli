@@ -12,8 +12,8 @@ export function estimateTokens(text: string): number {
 }
 
 /** Auto-generated section markers */
-const MARKER_START = "<!-- AUTO-GENERATED:START -->";
-const MARKER_END = "<!-- AUTO-GENERATED:END -->";
+export const MARKER_START = "<!-- AUTO-GENERATED:START -->";
+export const MARKER_END = "<!-- AUTO-GENERATED:END -->";
 
 /** Manual (user-editable) section markers */
 const MANUAL_START = "<!-- MANUAL:START -->";
@@ -96,9 +96,7 @@ export function generateSkillMd(input: SkillTemplateInput): string {
   lines.push("");
 
   // References pointer
-  lines.push(
-    "See `references/` for per-tool parameters, types, and examples.",
-  );
+  lines.push("See `references/` for per-tool parameters, types, and examples.");
   lines.push("");
 
   lines.push(MARKER_END);
