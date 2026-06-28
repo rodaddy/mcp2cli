@@ -23,6 +23,14 @@ export interface CacheMetadata {
   ttlMs: number;
   /** Number of tools cached */
   toolCount: number;
+  /**
+   * Deterministic fingerprint of the full schema surface (every tool's
+   * name + description + inputSchema + annotations) at write time. Lets the
+   * cache detect a contract change independent of the TTL: when a live fetch
+   * produces a different fingerprint, the cache is stale and must be refetched.
+   * Optional for backward compatibility with entries written before this field.
+   */
+  schemaFingerprint?: string;
 }
 
 /** A complete cache entry -- metadata + tool schemas */

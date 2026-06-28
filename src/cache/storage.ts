@@ -7,6 +7,7 @@ import { mkdir, unlink, readdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger/index.ts";
 import type { CacheEntry, CacheMetadata, CachedToolSchema } from "./types.ts";
+import { fingerprintSchemas } from "./hash.ts";
 
 const log = createLogger("cache");
 
@@ -126,6 +127,13 @@ export async function writeCache(
   service: string,
   tools: CachedToolSchema[],
   ttlMs: number = DEFAULT_TTL_MS,
+  /**
+   * Authoritative contract fingerprint from a server that publishes one
+   * (e.g. Open Brain's `get_contract.schema_hash`). When omitted, the
+   * fingerprint is derived from the tool surface hashes so staleness can still
+   * be detected for servers without a contract.
+   */
+  contractFingerprint?: string,
 ): Promise<void> {
   const filePath = getCacheFilePath(service);
   const dir = dirname(filePath);
@@ -133,12 +141,16 @@ export async function writeCache(
   // Ensure cache directory exists
   await mkdir(dir, { recursive: true });
 
+  const schemaFingerprint =
+    contractFingerprint ?? (await fingerprintSchemas(tools));
+
   const entry: CacheEntry = {
     metadata: {
       service,
       cachedAt: new Date().toISOString(),
       ttlMs,
       toolCount: tools.length,
+      schemaFingerprint,
     },
     tools,
   };
@@ -194,6 +206,81 @@ export async function clearCache(service?: string): Promise<number> {
 
   log.info("cache_cleared_all", { count: cleared });
   return cleared;
+}
+
+/**
+ * Clear every cache key belonging to a service: the bare `<service>.json`
+ * entry AND all per-credential entries `credential:<base64url([service,user])>.json`.
+ *
+ * A contract bump must invalidate all of these together -- otherwise the base
+ * key looks refreshed while a user's credential-scoped read still serves the
+ * old schema (the #58 failure). Credential keys encode the service name as the
+ * first element of the base64url-encoded `[service, userId]` tuple, so we decode
+ * each and match. Returns the number of files removed.
+ */
+export async function clearServiceCacheKeys(service: string): Promise<number> {
+  validateServiceName(service);
+  const cacheDir = getCacheDir();
+  let cleared = 0;
+
+  let entries: string[];
+  try {
+    entries = await readdir(cacheDir);
+  } catch {
+    return 0;
+  }
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const key = entry.replace(/\.json$/, "");
+
+    let matches = key === service;
+    if (!matches && key.startsWith("credential:")) {
+      const encoded = key.slice("credential:".length);
+      try {
+        const decoded = JSON.parse(
+          Buffer.from(encoded, "base64url").toString("utf8"),
+        );
+        matches = Array.isArray(decoded) && decoded[0] === service;
+      } catch {
+        // Not a decodable credential key -- leave it alone.
+        matches = false;
+      }
+    }
+
+    if (matches) {
+      // Count only files actually removed. A swallowed unlink that still
+      // incremented the count would report success while a stale credential
+      // entry survives -- silently re-opening the #58 staleness it exists to fix.
+      try {
+        await unlink(join(cacheDir, entry));
+        cleared++;
+      } catch (err) {
+        log.warn("cache_unlink_failed", {
+          service,
+          entry,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  if (cleared > 0) {
+    log.info("cache_keys_cleared", { service, count: cleared });
+  }
+  return cleared;
+}
+
+/**
+ * Read just the schema fingerprint for a cached service key, ignoring TTL.
+ * Returns undefined when there is no cache entry or it predates fingerprinting.
+ * Used to stamp daemon responses for #58 client-side cache coherence.
+ */
+export async function readCacheFingerprint(
+  service: string,
+): Promise<string | undefined> {
+  const entry = await readCacheRaw(service);
+  return entry?.metadata.schemaFingerprint;
 }
 
 /**

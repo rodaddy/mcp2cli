@@ -20,6 +20,51 @@ export function canonicalJson(value: unknown): string {
   });
 }
 
+/** SHA-256 hex digest of a string. */
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Aggregate fingerprint of a service's whole schema surface.
+ *
+ * Order-independent: hashes the sorted list of per-tool hashes, so the same set
+ * of tools always yields the same fingerprint regardless of listing order. A
+ * change to ANY tool's surface (including a new inputSchema field like
+ * `create_if_missing`) changes the fingerprint. This is the fallback signal for
+ * servers that do not publish an authoritative contract hash; for servers that
+ * do (e.g. Open Brain's `get_contract.schema_hash`), prefer that value.
+ */
+export async function fingerprintSchemas(
+  tools: { hash: string }[],
+): Promise<string> {
+  const joined = tools
+    .map((t) => t.hash)
+    .sort()
+    .join("|");
+  return sha256Hex(joined);
+}
+
+/**
+ * Placeholder some call sites substitute for a missing description before they
+ * reach the hasher. Normalized to "" so the fingerprint is identical whether a
+ * writer passed `undefined`, "", or this placeholder -- otherwise the daemon
+ * (which hashes `description ?? ""`) and the client warm path (which hashes the
+ * already-defaulted "(no description)") would produce divergent fingerprints
+ * for the same tool, clearing the cache on every read. See #58.
+ */
+const MISSING_DESCRIPTION = "(no description)";
+
+/** Canonical, writer-independent description used for hashing. */
+function normalizeDescription(description?: string): string {
+  if (!description || description === MISSING_DESCRIPTION) return "";
+  return description;
+}
+
 /**
  * Compute SHA-256 hash of a tool's schema surface.
  * The "surface" is: name + description + inputSchema + annotations.
@@ -33,7 +78,7 @@ export async function hashToolSchema(tool: {
 }): Promise<string> {
   const surface = canonicalJson({
     name: tool.name,
-    description: tool.description ?? "",
+    description: normalizeDescription(tool.description),
     inputSchema: tool.inputSchema,
     annotations: tool.annotations ?? null,
   });

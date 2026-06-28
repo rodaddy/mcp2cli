@@ -7,6 +7,7 @@ import {
   readCacheRaw,
   writeCache,
   clearCache,
+  clearServiceCacheKeys,
   listCachedServices,
   isCacheExpired,
   getCacheDir,
@@ -197,6 +198,54 @@ describe("clearCache", () => {
   test("returns 0 when cache directory does not exist", async () => {
     process.env.MCP2CLI_CACHE_DIR = join(testDir, "nonexistent-subdir");
     const cleared = await clearCache();
+    expect(cleared).toBe(0);
+  });
+});
+
+// -- clearServiceCacheKeys (#58: invalidate base + all credential keys) --
+
+describe("clearServiceCacheKeys", () => {
+  // Mirror the production key format: credential:<base64url([service, userId])>.
+  function credentialKey(service: string, userId: string): string {
+    const encoded = Buffer.from(JSON.stringify([service, userId])).toString(
+      "base64url",
+    );
+    return `credential:${encoded}`;
+  }
+
+  test("clears the base entry and every credential entry for the service", async () => {
+    await writeCache("open-brain", [makeTool("base")]);
+    await writeCache(credentialKey("open-brain", "user:rico"), [
+      makeTool("rico"),
+    ]);
+    await writeCache(credentialKey("open-brain", "user:skippy"), [
+      makeTool("skippy"),
+    ]);
+    // An unrelated service and its credential key must survive.
+    await writeCache("n8n", [makeTool("n8n_base")]);
+    await writeCache(credentialKey("n8n", "user:rico"), [makeTool("n8n_rico")]);
+
+    const cleared = await clearServiceCacheKeys("open-brain");
+    expect(cleared).toBe(3);
+
+    expect(await readCacheRaw("open-brain")).toBeNull();
+    expect(
+      await readCacheRaw(credentialKey("open-brain", "user:rico")),
+    ).toBeNull();
+    expect(
+      await readCacheRaw(credentialKey("open-brain", "user:skippy")),
+    ).toBeNull();
+
+    // Unrelated service untouched.
+    expect(await readCacheRaw("n8n")).not.toBeNull();
+    expect(
+      await readCacheRaw(credentialKey("n8n", "user:rico")),
+    ).not.toBeNull();
+  });
+
+  test("returns 0 when no keys match", async () => {
+    await writeCache("n8n", [makeTool("t1")]);
+    const cleared = await clearServiceCacheKeys("open-brain");
     expect(cleared).toBe(0);
   });
 });

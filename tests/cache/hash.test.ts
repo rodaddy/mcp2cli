@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { canonicalJson, hashToolSchema } from "../../src/cache/hash.ts";
+import {
+  canonicalJson,
+  hashToolSchema,
+  fingerprintSchemas,
+} from "../../src/cache/hash.ts";
 
 // -- canonicalJson --
 
@@ -140,5 +144,43 @@ describe("hashToolSchema", () => {
       annotations: { readOnly: false },
     });
     expect(hash1).not.toBe(hash2);
+  });
+});
+
+// -- fingerprintSchemas (#58 staleness signal) --
+
+describe("fingerprintSchemas", () => {
+  test("returns a 64-character hex string", async () => {
+    const fp = await fingerprintSchemas([{ hash: "aaa" }, { hash: "bbb" }]);
+    expect(fp).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("is order-independent", async () => {
+    const fp1 = await fingerprintSchemas([{ hash: "aaa" }, { hash: "bbb" }]);
+    const fp2 = await fingerprintSchemas([{ hash: "bbb" }, { hash: "aaa" }]);
+    expect(fp1).toBe(fp2);
+  });
+
+  test("changes when any tool hash changes (e.g. a new inputSchema field)", async () => {
+    const before = await fingerprintSchemas([
+      { hash: "tool_a_v1" },
+      { hash: "tool_b" },
+    ]);
+    // tool_a gains create_if_missing -> its surface hash changes
+    const after = await fingerprintSchemas([
+      { hash: "tool_a_v2" },
+      { hash: "tool_b" },
+    ]);
+    expect(before).not.toBe(after);
+  });
+
+  test("changes when a tool is added or removed", async () => {
+    const two = await fingerprintSchemas([{ hash: "a" }, { hash: "b" }]);
+    const three = await fingerprintSchemas([
+      { hash: "a" },
+      { hash: "b" },
+      { hash: "c" },
+    ]);
+    expect(two).not.toBe(three);
   });
 });

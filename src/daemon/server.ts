@@ -22,6 +22,7 @@ import {
   resolveToolNameCached,
 } from "../schema/cached.ts";
 import { getToolSchema, listToolsForService } from "../schema/introspect.ts";
+import { readCacheFingerprint } from "../cache/index.ts";
 import { auditToolCall, sanitizeParams } from "../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../access/index.ts";
 import { ConnectionError } from "../connection/errors.ts";
@@ -424,7 +425,18 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const tools = body.fresh
             ? await listToolsForService(conn.client)
             : await listToolsCached(conn.client, listPoolKey);
-          return Response.json({ success: true, result: tools });
+          // #58: stamp the BARE-service fingerprint (not the credential pool
+          // key). The drift-hook maintains the bare entry as the canonical,
+          // credential-independent per-service signal, and the client also keys
+          // its cache by bare service -- so both sides compare the same key.
+          // Comparing a credential-scoped fingerprint against the client's bare
+          // key never converges and would clear the cache on every call.
+          const listFingerprint = await readCacheFingerprint(body.service);
+          return Response.json({
+            success: true,
+            result: tools,
+            schemaFingerprint: listFingerprint,
+          });
         } catch (err) {
           return handleEndpointError(err, pool);
         } finally {
@@ -463,7 +475,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
               404,
             );
           }
-          return Response.json({ success: true, result });
+          // #58: stamp the BARE-service fingerprint (see /list-tools).
+          const schemaFingerprint = await readCacheFingerprint(body.service);
+          return Response.json({ success: true, result, schemaFingerprint });
         } catch (err) {
           return handleEndpointError(err, pool);
         } finally {
