@@ -2,7 +2,11 @@
  * CLI commands for managing per-identity credential mappings.
  * Routes through daemon API for all operations.
  */
-import { fetchDaemonApi } from "../../process/index.ts";
+import { callViaDaemon, fetchDaemonApi } from "../../process/index.ts";
+import {
+  buildOpenBrainCredentialsFromVaultwarden,
+  type OpenBrainBootstrapCredential,
+} from "../../credentials/index.ts";
 
 /**
  * Dispatch credential subcommands.
@@ -19,6 +23,7 @@ import { fetchDaemonApi } from "../../process/index.ts";
  *   mcp2cli credentials group remove <name>
  *   mcp2cli credentials group remove-members <name> <member1> [member2...]
  *   mcp2cli credentials reload
+ *   mcp2cli credentials bootstrap-open-brain [--item "Open Brain - Per-User Tokens"] [--service open-brain] [--force]
  */
 export async function handleCredentials(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -48,9 +53,12 @@ export async function handleCredentials(args: string[]): Promise<void> {
     case "reload":
       await handleReload();
       break;
+    case "bootstrap-open-brain":
+      await handleBootstrapOpenBrain(args.slice(1));
+      break;
     default:
       console.log(
-        "Usage: mcp2cli credentials <list|set|set-default|remove|remove-default|resolve|group|reload>",
+        "Usage: mcp2cli credentials <list|set|set-default|remove|remove-default|resolve|group|reload|bootstrap-open-brain>",
       );
       break;
   }
@@ -73,7 +81,9 @@ async function handleSet(args: string[]): Promise<void> {
   const identity = args[0];
   const service = args[1];
   if (!identity || !service) {
-    console.log("Usage: mcp2cli credentials set <identity> <service> --header 'Key: Value' [--env 'KEY=VALUE']");
+    console.log(
+      "Usage: mcp2cli credentials set <identity> <service> --header 'Key: Value' [--env 'KEY=VALUE']",
+    );
     return;
   }
   const credential = parseCredentialFlags(args.slice(2));
@@ -90,7 +100,9 @@ async function handleSet(args: string[]): Promise<void> {
 async function handleSetDefault(args: string[]): Promise<void> {
   const service = args[0];
   if (!service) {
-    console.log("Usage: mcp2cli credentials set-default <service> --header 'Key: Value' [--env 'KEY=VALUE']");
+    console.log(
+      "Usage: mcp2cli credentials set-default <service> --header 'Key: Value' [--env 'KEY=VALUE']",
+    );
     return;
   }
   const credential = parseCredentialFlags(args.slice(1));
@@ -156,7 +168,9 @@ async function handleGroup(args: string[]): Promise<void> {
       const name = args[1];
       const members = args.slice(2);
       if (!name || members.length === 0) {
-        console.log("Usage: mcp2cli credentials group add <name> <member1> [member2...]");
+        console.log(
+          "Usage: mcp2cli credentials group add <name> <member1> [member2...]",
+        );
         return;
       }
       const result = await fetchDaemonApi("POST", "/api/credentials/groups", {
@@ -170,7 +184,9 @@ async function handleGroup(args: string[]): Promise<void> {
       const name = args[1];
       const members = args.slice(2);
       if (!name || members.length === 0) {
-        console.log("Usage: mcp2cli credentials group add-members <name> <member1> [member2...]");
+        console.log(
+          "Usage: mcp2cli credentials group add-members <name> <member1> [member2...]",
+        );
         return;
       }
       const result = await fetchDaemonApi(
@@ -198,7 +214,9 @@ async function handleGroup(args: string[]): Promise<void> {
       const name = args[1];
       const members = args.slice(2);
       if (!name || members.length === 0) {
-        console.log("Usage: mcp2cli credentials group remove-members <name> <member1> [member2...]");
+        console.log(
+          "Usage: mcp2cli credentials group remove-members <name> <member1> [member2...]",
+        );
         return;
       }
       const result = await fetchDaemonApi(
@@ -220,6 +238,103 @@ async function handleGroup(args: string[]): Promise<void> {
 async function handleReload(): Promise<void> {
   const result = await fetchDaemonApi("POST", "/api/credentials/reload");
   console.log(JSON.stringify(result));
+}
+
+async function handleBootstrapOpenBrain(args: string[]): Promise<void> {
+  const options = parseBootstrapOpenBrainFlags(args);
+  if (!options) return;
+
+  const lookup = await callViaDaemon({
+    service: "vaultwarden-secrets",
+    tool: "get_credential",
+    params: { query: options.item },
+  });
+  if (!lookup.success) {
+    console.log(JSON.stringify(lookup));
+    return;
+  }
+
+  const desired = buildOpenBrainCredentialsFromVaultwarden(lookup.result, {
+    serviceName: options.service,
+  });
+  const existing = (await fetchDaemonApi("GET", "/api/credentials")) as {
+    credentials?: Record<string, Record<string, unknown>>;
+  };
+  const changed: string[] = [];
+  const skipped: string[] = [];
+
+  for (const entry of desired) {
+    if (
+      !options.force &&
+      existing.credentials?.[entry.identity]?.[entry.service]
+    ) {
+      skipped.push(entry.identity);
+      continue;
+    }
+    await fetchDaemonApi("POST", "/api/credentials", {
+      identity: entry.identity,
+      service: entry.service,
+      credential: entry.credential,
+    });
+    changed.push(entry.identity);
+  }
+
+  console.log(
+    JSON.stringify(
+      formatOpenBrainBootstrapSummary(options, desired, changed, skipped),
+    ),
+  );
+}
+
+function parseBootstrapOpenBrainFlags(
+  args: string[],
+): { item: string; service: string; force: boolean } | null {
+  const options = {
+    item: "Open Brain - Per-User Tokens",
+    service: "open-brain",
+    force: false,
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--item" && args[i + 1]) {
+      options.item = args[++i]!;
+    } else if (arg === "--service" && args[i + 1]) {
+      options.service = args[++i]!;
+    } else if (arg === "--force") {
+      options.force = true;
+    } else {
+      console.log(
+        "Usage: mcp2cli credentials bootstrap-open-brain [--item 'Open Brain - Per-User Tokens'] [--service open-brain] [--force]",
+      );
+      return null;
+    }
+  }
+
+  return options;
+}
+
+export function formatOpenBrainBootstrapSummary(
+  options: { item: string; service: string },
+  desired: OpenBrainBootstrapCredential[],
+  changed: string[],
+  skipped: string[],
+): {
+  success: true;
+  service: string;
+  item: string;
+  changed: string[];
+  skipped: string[];
+  discovered: string[];
+} {
+  return {
+    success: true,
+    service: options.service,
+    item: options.item,
+    changed,
+    skipped,
+    discovered: desired.map((entry) => entry.identity),
+  };
 }
 
 /**
@@ -258,7 +373,10 @@ function parseCredentialFlags(
     return null;
   }
 
-  const result: { headers?: Record<string, string>; env?: Record<string, string> } = {};
+  const result: {
+    headers?: Record<string, string>;
+    env?: Record<string, string>;
+  } = {};
   if (Object.keys(headers).length > 0) result.headers = headers;
   if (Object.keys(env).length > 0) result.env = env;
   return result;

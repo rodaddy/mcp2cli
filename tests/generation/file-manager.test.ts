@@ -133,6 +133,42 @@ describe("mergeContent", () => {
     expect(result).toContain("Before");
     expect(result).toContain("After");
   });
+
+  test("preserves inline trigger array values when merging frontmatter", () => {
+    const existing = [
+      "---",
+      "name: old-skill",
+      'triggers: [custom-trigger, "quoted trigger"]',
+      "x-owner: human",
+      "---",
+      "# Custom header",
+      "<!-- AUTO-GENERATED:START -->",
+      "old",
+      "<!-- AUTO-GENERATED:END -->",
+    ].join("\n");
+
+    const generated = [
+      "---",
+      "name: generated-skill",
+      "triggers:",
+      "  - generated-trigger",
+      "schema_hash: abc123",
+      "---",
+      "<!-- AUTO-GENERATED:START -->",
+      "new",
+      "<!-- AUTO-GENERATED:END -->",
+    ].join("\n");
+
+    const result = mergeContent(existing, generated);
+    expect(result).toContain("name: generated-skill");
+    expect(result).toContain("schema_hash: abc123");
+    expect(result).toContain("  - generated-trigger");
+    expect(result).toContain("  - custom-trigger");
+    expect(result).toContain("  - quoted trigger");
+    expect(result).toContain("x-owner: human");
+    expect(result).toContain("new");
+    expect(result).not.toContain("old");
+  });
 });
 
 // -- planFileWrites --

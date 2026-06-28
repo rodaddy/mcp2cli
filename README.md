@@ -372,6 +372,8 @@ When a tool call comes in, credentials are resolved in priority order:
 
 For http/websocket services, credential headers are merged into the connection. For stdio services, credential env vars are merged into the process environment.
 
+For identity-sensitive services, set `requiresCredentials: true` in `services.json`. If no user, group, or explicit default credential exists, the daemon rejects the call instead of using base service headers.
+
 ### Credential CLI
 
 ```bash
@@ -404,23 +406,31 @@ mcp2cli credentials group remove ai_agents
 
 # Reload from disk after manual edits
 mcp2cli credentials reload
+
+# Populate Open Brain credentials from a Vaultwarden item
+mcp2cli credentials bootstrap-open-brain --item "Open Brain - Per-User Tokens"
 ```
 
 ### Open Brain Example
 
-Open Brain (OBv2) is an HTTP MCP service. With credential management, each user gets their own API key:
+Open Brain (OBv2) is an HTTP MCP service where the bearer token controls namespace identity. Do not put an Open Brain `Authorization` header in `services.json`; store it only as a per-identity credential.
 
-**services.json** -- base config (no credentials, just the endpoint):
+**services.json** -- base config for a hosted daemon (no credentials, endpoint only):
 ```json
 {
   "services": {
     "open-brain": {
       "backend": "http",
-      "url": "http://10.71.20.49:3100/mcp"
+      "url": "http://open-brain.example.internal:3100/mcp",
+      "source": "remote",
+      "requiresCredentials": true,
+      "preconnect": false
     }
   }
 }
 ```
+
+Use `source: "remote"` when the CLI is routing through a hosted mcp2cli daemon. `requiresCredentials: true` makes missing per-identity credentials fail closed, and `preconnect: false` prevents daemon startup from opening an unauthenticated base Open Brain connection.
 
 **credentials.json** -- per-identity keys:
 ```json
@@ -441,21 +451,27 @@ Open Brain (OBv2) is an HTTP MCP service. With credential management, each user 
 
 Now when rico calls `mcp2cli open-brain search_all --params '{"query": "kubernetes"}'`, his personal key is injected. When skippy calls the same tool, the agents' shared key is used. Each gets their own connection in the pool.
 
+**Vaultwarden bootstrap** -- if the item `Open Brain - Per-User Tokens` has custom fields such as `AUTH_TOKEN_USER_RICO`, `AUTH_TOKEN_USER_SKIPPY`, and `AUTH_TOKEN_USER_BILBY`, run:
+
+```bash
+mcp2cli credentials bootstrap-open-brain
+```
+
+The field suffix is lowercased and used as the identity (`AUTH_TOKEN_USER_RICO` -> `rico`). Existing credentials are skipped unless `--force` is passed. The command prints counts and identity names only; it does not print bearer tokens.
+
 ### Caller Identity Headers
 
 Header and env values support `${caller.id}` and `${caller.role}` template variables. These are replaced with the authenticated caller's identity at call time.
 
-**In services.json** -- inject identity headers for all callers without needing credentials.json:
+**In services.json** -- inject identity headers for services whose backend trusts caller metadata instead of per-user bearer tokens:
 ```json
 {
   "services": {
-    "open-brain": {
+    "example-service": {
       "backend": "http",
-      "url": "http://10.71.20.49:3100/mcp",
+      "url": "https://example.internal/mcp",
       "headers": {
-        "Authorization": "Bearer shared-ob-key",
         "X-Agent-Id": "${caller.id}",
-        "X-Namespace": "${caller.id}",
         "X-Role": "${caller.role}"
       }
     }
@@ -463,7 +479,7 @@ Header and env values support `${caller.id}` and `${caller.role}` template varia
 }
 ```
 
-When bilby calls open-brain, the request headers become `X-Agent-Id: bilby`, `X-Namespace: bilby`, `X-Role: agent`. The downstream service (Open Brain) can use these to route to the correct namespace.
+When bilby calls the service, the request headers become `X-Agent-Id: bilby` and `X-Role: agent`.
 
 **In credentials.json** -- combine per-identity keys with identity headers:
 ```json
@@ -654,6 +670,23 @@ mcp2cli generate-skills n8n
 ```
 
 Manual edits inside `MANUAL:START` / `MANUAL:END` markers are preserved across regeneration. When schema drift is detected (via the caching layer), skill regeneration can be triggered automatically.
+
+For Open Brain MCP changes, use the registry-backed path rather than directly
+refreshing a local daemon as the release proof:
+
+```bash
+# First land any required registry/config/process update in rodaddy/rtech-mcps.
+# Then make mcp2cli pull the registry-backed service definition and refresh live schemas.
+mcp2cli cache diff open-brain
+mcp2cli cache warm open-brain
+mcp2cli generate-skills open-brain --conflict=merge
+mcp2cli open-brain --help
+```
+
+Local validation should use an isolated temporary `MCP2CLI_HOME`/config/cache so
+tests cannot mutate the operator's real local `~/.config/mcp2cli` state. Final
+verification should run against the hosted daemon and prove the new tools are
+visible and callable there.
 
 ## Additional Environment Variables
 

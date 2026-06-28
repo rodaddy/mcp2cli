@@ -8,7 +8,7 @@ router, then apply the global and Development-wide routers:
 
 - Global: `~/.codex/AGENTS.md`
 - Development-wide: `/Volumes/ThunderBolt/Development/AGENTS.md`
-- Repo-local quick alias: `_AGENTS.md`
+- Repo-local quick alias: `_agents.md`
 
 If a higher-level policy is stricter, follow the stricter rule. If this file is
 more specific to `mcp2cli`, follow this file. On this case-insensitive volume,

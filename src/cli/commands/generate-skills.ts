@@ -1,10 +1,6 @@
 import { printError } from "../errors.ts";
 import { loadConfig, getConfigPath } from "../../config/index.ts";
 import { ConfigError } from "../../config/errors.ts";
-import { connectToService } from "../../connection/client.ts";
-import { connectToHttpService } from "../../connection/http-transport.ts";
-import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
-import { listToolsForService, getToolSchema } from "../../schema/introspect.ts";
 import {
   detectPrefixGroups,
   generateSkillMd,
@@ -21,11 +17,15 @@ import {
 } from "../../generation/index.ts";
 import { filterTools, extractPolicy } from "../../access/filter.ts";
 import { EXIT_CODES } from "../../types/index.ts";
-import type { ConflictMode, SkillTemplateInput } from "../../generation/types.ts";
+import type {
+  ConflictMode,
+  SkillTemplateInput,
+} from "../../generation/types.ts";
 import type { SchemaOutput } from "../../schema/types.ts";
 import type { ToolSummary } from "../../schema/types.ts";
 import { join } from "node:path";
 import { computeSchemaHash } from "../../generation/skill-hash.ts";
+import { discoverServiceSchemas } from "./service-discovery.ts";
 
 /**
  * Extract trigger keywords from tool descriptions.
@@ -40,11 +40,45 @@ function extractTriggerKeywords(
 
   // Common stop words to exclude
   const stopWords = new Set([
-    "the", "and", "for", "with", "from", "that", "this", "will", "have",
-    "been", "were", "they", "their", "into", "when", "which", "more",
-    "some", "than", "them", "each", "also", "about", "over", "such",
-    "after", "most", "only", "other", "given", "returns", "object",
-    "type", "string", "number", "boolean", "array", "optional", "required",
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "will",
+    "have",
+    "been",
+    "were",
+    "they",
+    "their",
+    "into",
+    "when",
+    "which",
+    "more",
+    "some",
+    "than",
+    "them",
+    "each",
+    "also",
+    "about",
+    "over",
+    "such",
+    "after",
+    "most",
+    "only",
+    "other",
+    "given",
+    "returns",
+    "object",
+    "type",
+    "string",
+    "number",
+    "boolean",
+    "array",
+    "optional",
+    "required",
   ]);
 
   for (const desc of descriptions) {
@@ -135,7 +169,8 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     printError({
       error: true,
       code: "INPUT_VALIDATION_ERROR",
-      message: "Missing required argument: <service>. Usage: mcp2cli generate-skills <service>",
+      message:
+        "Missing required argument: <service>. Usage: mcp2cli generate-skills <service>",
     });
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
@@ -151,7 +186,9 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
   if (!conflictMode) {
     if (!process.stdin.isTTY) {
       conflictMode = "skip";
-      console.error("Warning: non-interactive mode, defaulting to --conflict=skip");
+      console.error(
+        "Warning: non-interactive mode, defaulting to --conflict=skip",
+      );
     } else {
       conflictMode = "skip"; // safe default even for TTY
     }
@@ -185,16 +222,10 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     return;
   }
 
-  // Connect to MCP server (stdio, http, or websocket)
-  const connection = service.backend === "http"
-    ? await connectToHttpService(service)
-    : service.backend === "websocket"
-      ? await connectToWebSocketService(service)
-      : await connectToService(service);
-
   try {
     // List all tools
-    let tools: ToolSummary[] = await listToolsForService(connection.client);
+    const discovery = await discoverServiceSchemas(serviceName, service);
+    let tools: ToolSummary[] = discovery.tools;
 
     if (tools.length === 0) {
       printError({
@@ -214,20 +245,21 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
       printError({
         error: true,
         code: "INPUT_VALIDATION_ERROR",
-        message: "All tools are blocked by access policy. No skills to generate.",
+        message:
+          "All tools are blocked by access policy. No skills to generate.",
       });
       process.exitCode = EXIT_CODES.VALIDATION;
       return;
     }
 
     // Get full schemas for each tool (already filtered by access control)
-    const schemas: SchemaOutput[] = [];
-    for (const tool of tools) {
-      const schema = await getToolSchema(connection.client, tool.name, serviceName);
-      if (schema) {
-        schemas.push(schema);
-      }
-    }
+    const allowedToolNames = new Set(tools.map((tool) => tool.name));
+    const schemas: SchemaOutput[] = discovery.schemas.filter((schema) =>
+      allowedToolNames.has(schema.tool),
+    );
+    const cachedSchemas = discovery.cachedSchemas.filter((schema) =>
+      allowedToolNames.has(schema.name),
+    );
 
     // Group tools by prefix
     const groups = detectPrefixGroups(schemas, serviceName);
@@ -236,19 +268,24 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     const descriptions = tools.map((t) => t.description);
     const triggerKeywords = extractTriggerKeywords(serviceName, descriptions);
 
-    // Compute schema hash from tool names + descriptions for drift detection
-    const schemaHash = await computeSchemaHash(tools);
+    // Compute schema hash from the same full-description surface that `skills list`
+    // compares against. The rendered tool table may use truncated descriptions.
+    const schemaHash = await computeSchemaHash(cachedSchemas);
 
     // H3: Only update generatedAt when the schema hash actually changes
     const outputDir = resolveOutputDir(serviceName, outputFlag);
     const existingSkillContent = await readExistingSkillFile(outputDir);
     let generatedAt: string;
     if (existingSkillContent) {
-      const existingHashMatch = existingSkillContent.match(/^schema_hash:\s*(\S+)/m);
+      const existingHashMatch = existingSkillContent.match(
+        /^schema_hash:\s*(\S+)/m,
+      );
       const existingHash = existingHashMatch?.[1];
       if (existingHash === schemaHash) {
         // Reuse existing timestamp when schema hasn't changed
-        const existingAtMatch = existingSkillContent.match(/^generated_at:\s*(\S+)/m);
+        const existingAtMatch = existingSkillContent.match(
+          /^generated_at:\s*(\S+)/m,
+        );
         generatedAt = existingAtMatch?.[1] ?? new Date().toISOString();
       } else {
         generatedAt = new Date().toISOString();
@@ -295,7 +332,9 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     // Token budget check
     const tokenCount = estimateTokens(skillMd);
     if (tokenCount > 300) {
-      console.error(`Warning: SKILL.md estimated at ${tokenCount} tokens (target: <300)`);
+      console.error(
+        `Warning: SKILL.md estimated at ${tokenCount} tokens (target: <300)`,
+      );
     }
 
     // Generate reference files
@@ -312,13 +351,15 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
 
     // Dry-run: output plan without writing files
     if (dryRun) {
-      console.log(JSON.stringify({
-        dryRun: true,
-        service: serviceName,
-        outputDir,
-        files: [...generated.keys()],
-        tokenCount,
-      }));
+      console.log(
+        JSON.stringify({
+          dryRun: true,
+          service: serviceName,
+          outputDir,
+          files: [...generated.keys()],
+          tokenCount,
+        }),
+      );
       process.exitCode = EXIT_CODES.DRY_RUN;
       return;
     }
@@ -342,7 +383,7 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     };
     console.log(JSON.stringify(result));
     process.exitCode = EXIT_CODES.SUCCESS;
-  } finally {
-    await connection.close();
+  } catch (err) {
+    throw err;
   }
 };

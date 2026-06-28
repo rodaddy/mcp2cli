@@ -7,13 +7,19 @@ import { z } from "zod";
  * - "remote-local": try remote first, fall back to local if unreachable
  * When omitted, defaults to "local" (no remote URL) or "remote-local" (remote URL set).
  */
-export const SourceSchema = z.enum(["local", "remote", "remote-local"]).optional();
+export const SourceSchema = z
+  .enum(["local", "remote", "remote-local"])
+  .optional();
 export type ServiceSource = z.infer<typeof SourceSchema>;
 
-const SecretRefUrlSchema = z.string().refine(
-  (value) => (/^\$\{secret:[^}]+\}$/.test(value)) || z.string().url().safeParse(value).success,
-  { message: "Invalid url" },
-);
+const SecretRefUrlSchema = z
+  .string()
+  .refine(
+    (value) =>
+      /^\$\{secret:[^}]+\}$/.test(value) ||
+      z.string().url().safeParse(value).success,
+    { message: "Invalid url" },
+  );
 
 /**
  * Tool access control fields shared by all service backends.
@@ -28,6 +34,18 @@ const accessControlFields = {
   timeout: z.number().int().positive().optional(),
   /** OS platforms where this service can run locally. Values match process.platform. */
   platforms: z.array(z.string().min(1)).optional(),
+  /**
+   * Require a per-identity credential before connecting this service through
+   * the daemon. This is for identity-sensitive services whose backend bearer
+   * token determines data ownership, such as Open Brain namespaces.
+   */
+  requiresCredentials: z.boolean().optional(),
+  /**
+   * Whether daemon startup preconnect should open a base connection for this
+   * service. Defaults to true. Set false for services that require per-user
+   * credentials so the unauthenticated base service is never probed.
+   */
+  preconnect: z.boolean().optional(),
   source: SourceSchema,
 };
 

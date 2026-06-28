@@ -83,10 +83,7 @@ describe("generate-skills integration", () => {
   test("SKILL.md has valid frontmatter, tool table, invoke pattern, markers", async () => {
     const { env, outputDir } = await setupTestEnv();
 
-    runCli(
-      ["generate-skills", "mock-server", `--output=${outputDir}`],
-      env,
-    );
+    runCli(["generate-skills", "mock-server", `--output=${outputDir}`], env);
 
     const skillContent = await Bun.file(join(outputDir, "SKILL.md")).text();
 
@@ -164,10 +161,7 @@ describe("generate-skills integration", () => {
     const { env, outputDir } = await setupTestEnv();
 
     // First run: generate files
-    runCli(
-      ["generate-skills", "mock-server", `--output=${outputDir}`],
-      env,
-    );
+    runCli(["generate-skills", "mock-server", `--output=${outputDir}`], env);
 
     // Read original content
     const originalContent = await Bun.file(join(outputDir, "SKILL.md")).text();
@@ -178,7 +172,12 @@ describe("generate-skills integration", () => {
 
     // Second run with --conflict=skip
     const result = runCli(
-      ["generate-skills", "mock-server", `--output=${outputDir}`, "--conflict=skip"],
+      [
+        "generate-skills",
+        "mock-server",
+        `--output=${outputDir}`,
+        "--conflict=skip",
+      ],
       env,
     );
 
@@ -193,10 +192,7 @@ describe("generate-skills integration", () => {
     const { env, outputDir } = await setupTestEnv();
 
     // First run: generate files
-    runCli(
-      ["generate-skills", "mock-server", `--output=${outputDir}`],
-      env,
-    );
+    runCli(["generate-skills", "mock-server", `--output=${outputDir}`], env);
 
     // Modify the file
     const skillPath = join(outputDir, "SKILL.md");
@@ -205,7 +201,12 @@ describe("generate-skills integration", () => {
 
     // Second run with --conflict=force
     const result = runCli(
-      ["generate-skills", "mock-server", `--output=${outputDir}`, "--conflict=force"],
+      [
+        "generate-skills",
+        "mock-server",
+        `--output=${outputDir}`,
+        "--conflict=force",
+      ],
       env,
     );
 
@@ -220,20 +221,23 @@ describe("generate-skills integration", () => {
     const { env, outputDir } = await setupTestEnv();
 
     // First run: generate files
-    runCli(
-      ["generate-skills", "mock-server", `--output=${outputDir}`],
-      env,
-    );
+    runCli(["generate-skills", "mock-server", `--output=${outputDir}`], env);
 
     // Add user content OUTSIDE auto-generated markers
     const skillPath = join(outputDir, "SKILL.md");
     const original = await Bun.file(skillPath).text();
-    const withUserContent = original + "\n## My Custom Notes\n\nThis should be preserved.\n";
+    const withUserContent =
+      original + "\n## My Custom Notes\n\nThis should be preserved.\n";
     await Bun.write(skillPath, withUserContent);
 
     // Second run with --conflict=merge
     const result = runCli(
-      ["generate-skills", "mock-server", `--output=${outputDir}`, "--conflict=merge"],
+      [
+        "generate-skills",
+        "mock-server",
+        `--output=${outputDir}`,
+        "--conflict=merge",
+      ],
       env,
     );
 
@@ -247,6 +251,55 @@ describe("generate-skills integration", () => {
     // Auto-generated content should still be present (refreshed)
     expect(afterContent).toContain("AUTO-GENERATED:START");
     expect(afterContent).toContain("AUTO-GENERATED:END");
+  }, 30_000);
+
+  test("conflict merge refreshes generated frontmatter metadata", async () => {
+    const { env, outputDir } = await setupTestEnv();
+
+    runCli(["generate-skills", "mock-server", `--output=${outputDir}`], env);
+
+    const skillPath = join(outputDir, "SKILL.md");
+    const original = await Bun.file(skillPath).text();
+    const oldFrontmatter = [
+      "---",
+      "name: mock-server",
+      "description: MCP tools for mock-server",
+      "triggers:",
+      "  - mock-server",
+      "  - custom-trigger",
+      "x-owner: hand-edited",
+      "---",
+      "",
+    ].join("\n");
+    const withoutMetadata = original.replace(
+      /^---\n[\s\S]*?\n---\n\n/,
+      oldFrontmatter,
+    );
+    await Bun.write(
+      skillPath,
+      withoutMetadata + "\n## My Custom Notes\n\nThis should be preserved.\n",
+    );
+
+    const result = runCli(
+      [
+        "generate-skills",
+        "mock-server",
+        `--output=${outputDir}`,
+        "--conflict=merge",
+      ],
+      env,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const afterContent = await Bun.file(skillPath).text();
+    expect(afterContent).toContain("tool_count: 3");
+    expect(afterContent).toMatch(/^generated_at:\s*\S+/m);
+    expect(afterContent).toMatch(/^schema_hash:\s*[0-9a-f]{16}/m);
+    expect(afterContent).toContain("  - custom-trigger");
+    expect(afterContent).toContain("x-owner: hand-edited");
+    expect(afterContent).toContain("My Custom Notes");
+    expect(afterContent).toContain("This should be preserved.");
   }, 30_000);
 
   test("missing service arg returns structured validation error", async () => {

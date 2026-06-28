@@ -2,14 +2,18 @@
  * Handle `mcp2cli cache <subcommand>` -- manage schema cache.
  * Supports: clear [service], status, diff <service>
  */
-import { clearCache, listCachedServices, readCacheRaw, detectDrift, resolveTtlMs, writeCache, mapToolsToCachedSchemas } from "../../cache/index.ts";
+import {
+  clearCache,
+  listCachedServices,
+  readCacheRaw,
+  detectDrift,
+  resolveTtlMs,
+  writeCache,
+} from "../../cache/index.ts";
 import { loadConfig } from "../../config/index.ts";
-import { connectToService } from "../../connection/index.ts";
-import { connectToHttpService } from "../../connection/http-transport.ts";
-import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
-import { listAllTools } from "../../schema/introspect.ts";
 import { EXIT_CODES } from "../../types/index.ts";
 import type { CommandHandler } from "../../types/index.ts";
+import { discoverServiceSchemas } from "./service-discovery.ts";
 
 export const handleCache: CommandHandler = async (args: string[]) => {
   const subcommand = args[0];
@@ -39,7 +43,9 @@ export const handleCache: CommandHandler = async (args: string[]) => {
           "    warm [service]     Fetch and cache schemas (all or specific service)",
         ].join("\n"),
       );
-      process.exitCode = subcommand ? EXIT_CODES.VALIDATION : EXIT_CODES.SUCCESS;
+      process.exitCode = subcommand
+        ? EXIT_CODES.VALIDATION
+        : EXIT_CODES.SUCCESS;
       break;
   }
 };
@@ -71,7 +77,9 @@ async function handleCacheDiff(args: string[]): Promise<void> {
 
   const cached = await readCacheRaw(serviceName);
   if (!cached) {
-    console.log(`No cached schemas for "${serviceName}". Run a command against this service first to populate the cache.`);
+    console.log(
+      `No cached schemas for "${serviceName}". Run a command against this service first to populate the cache.`,
+    );
     process.exitCode = EXIT_CODES.SUCCESS;
     return;
   }
@@ -84,25 +92,29 @@ async function handleCacheDiff(args: string[]): Promise<void> {
     return;
   }
 
-  const connection = service.backend === "http"
-    ? await connectToHttpService(service)
-    : service.backend === "websocket"
-      ? await connectToWebSocketService(service)
-      : await connectToService(service);
-
   try {
-    const rawTools = await listAllTools(connection.client);
-    const liveSchemas = await mapToolsToCachedSchemas(rawTools);
-
-    const drift = detectDrift(serviceName, cached.tools, liveSchemas, cached.metadata.cachedAt);
+    const { cachedSchemas: liveSchemas } = await discoverServiceSchemas(
+      serviceName,
+      service,
+      { fresh: true },
+    );
+    const drift = detectDrift(
+      serviceName,
+      cached.tools,
+      liveSchemas,
+      cached.metadata.cachedAt,
+    );
 
     if (!drift.hasDrift) {
-      console.log(`No schema drift detected for "${serviceName}". Cache is current.`);
+      console.log(
+        `No schema drift detected for "${serviceName}". Cache is current.`,
+      );
     } else {
       const lines = [`Schema drift detected for "${serviceName}":\n`];
       for (const change of drift.changes) {
         const detail = change.details ? ` (${change.details})` : "";
-        const symbol = change.type === "added" ? "+" : change.type === "removed" ? "-" : "~";
+        const symbol =
+          change.type === "added" ? "+" : change.type === "removed" ? "-" : "~";
         lines.push(`  ${symbol} ${change.tool}${detail}`);
       }
       lines.push(`\nCached at: ${drift.cachedAt}`);
@@ -113,8 +125,9 @@ async function handleCacheDiff(args: string[]): Promise<void> {
     // Update cache with live data
     await writeCache(serviceName, liveSchemas, resolveTtlMs());
     process.exitCode = EXIT_CODES.SUCCESS;
-  } finally {
-    await connection.close();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = EXIT_CODES.CONNECTION;
   }
 }
 
@@ -142,23 +155,19 @@ async function handleCacheWarm(args: string[]): Promise<void> {
     try {
       const result = await Promise.race([
         (async () => {
-          const connection = service.backend === "http"
-            ? await connectToHttpService(service)
-            : service.backend === "websocket"
-              ? await connectToWebSocketService(service)
-              : await connectToService(service);
-
-          try {
-            const rawTools = await listAllTools(connection.client);
-            const schemas = await mapToolsToCachedSchemas(rawTools);
-            await writeCache(serviceName, schemas, resolveTtlMs());
-            return schemas.length;
-          } finally {
-            await connection.close();
-          }
+          const { cachedSchemas } = await discoverServiceSchemas(
+            serviceName,
+            service,
+            { fresh: true },
+          );
+          await writeCache(serviceName, cachedSchemas, resolveTtlMs());
+          return cachedSchemas.length;
         })(),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`timed out after ${PER_SERVICE_TIMEOUT}ms`)), PER_SERVICE_TIMEOUT),
+          setTimeout(
+            () => reject(new Error(`timed out after ${PER_SERVICE_TIMEOUT}ms`)),
+            PER_SERVICE_TIMEOUT,
+          ),
         ),
       ]);
       console.log(`  ${serviceName}: ${result} tools cached`);
@@ -170,7 +179,9 @@ async function handleCacheWarm(args: string[]): Promise<void> {
     }
   }
 
-  console.log(`\nWarmed ${warmed} service${warmed === 1 ? "" : "s"}${failed > 0 ? `, ${failed} failed` : ""}`);
+  console.log(
+    `\nWarmed ${warmed} service${warmed === 1 ? "" : "s"}${failed > 0 ? `, ${failed} failed` : ""}`,
+  );
   process.exitCode = EXIT_CODES.SUCCESS;
 }
 
@@ -189,8 +200,9 @@ async function handleCacheStatus(): Promise<void> {
     const entry = await readCacheRaw(service);
     if (entry) {
       const age = Date.now() - new Date(entry.metadata.cachedAt).getTime();
-      const ageHours = Math.round(age / (1000 * 60 * 60) * 10) / 10;
-      const ttlHours = Math.round(entry.metadata.ttlMs / (1000 * 60 * 60) * 10) / 10;
+      const ageHours = Math.round((age / (1000 * 60 * 60)) * 10) / 10;
+      const ttlHours =
+        Math.round((entry.metadata.ttlMs / (1000 * 60 * 60)) * 10) / 10;
       const expired = age > entry.metadata.ttlMs;
       const status = expired ? " (expired)" : "";
       lines.push(

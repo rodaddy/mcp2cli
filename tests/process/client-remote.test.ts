@@ -6,7 +6,11 @@ import {
   getRemoteServiceAvailability,
   getRemoteServiceNames,
 } from "../../src/process/remote-discovery.ts";
-import { clearClientConfigCache, resolveSource } from "../../src/process/client.ts";
+import {
+  callViaDaemon,
+  clearClientConfigCache,
+  resolveSource,
+} from "../../src/process/client.ts";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -170,18 +174,27 @@ describe("remote service discovery", () => {
   });
 
   test("lists remote configured services from authenticated daemon discovery", async () => {
-    await expect(getRemoteServiceNames()).resolves.toEqual(["yt-dlp", "stealth-browser"]);
+    await expect(getRemoteServiceNames()).resolves.toEqual([
+      "yt-dlp",
+      "stealth-browser",
+    ]);
   });
 
   test("distinguishes hosted and non-hosted services", async () => {
-    await expect(getRemoteServiceAvailability("yt-dlp")).resolves.toBe("hosted");
-    await expect(getRemoteServiceAvailability("king-secrets")).resolves.toBe("not-hosted");
+    await expect(getRemoteServiceAvailability("yt-dlp")).resolves.toBe(
+      "hosted",
+    );
+    await expect(getRemoteServiceAvailability("king-secrets")).resolves.toBe(
+      "not-hosted",
+    );
   });
 
   test("returns no-remote without MCP2CLI_REMOTE_URL", async () => {
     delete process.env.MCP2CLI_REMOTE_URL;
     clearRemoteServiceCache();
-    await expect(getRemoteServiceAvailability("yt-dlp")).resolves.toBe("no-remote");
+    await expect(getRemoteServiceAvailability("yt-dlp")).resolves.toBe(
+      "no-remote",
+    );
   });
 
   test("does not cache failed discovery snapshots", async () => {
@@ -208,8 +221,12 @@ describe("remote service discovery", () => {
     process.env.MCP2CLI_REMOTE_URL = `http://localhost:${server.port}`;
     process.env.MCP2CLI_REMOTE_SERVICE_CACHE_TTL_MS = "60000";
 
-    await expect(getRemoteServiceAvailability("recovered")).resolves.toBe("unknown");
-    await expect(getRemoteServiceAvailability("recovered")).resolves.toBe("hosted");
+    await expect(getRemoteServiceAvailability("recovered")).resolves.toBe(
+      "unknown",
+    );
+    await expect(getRemoteServiceAvailability("recovered")).resolves.toBe(
+      "hosted",
+    );
   });
 });
 
@@ -266,7 +283,9 @@ describe("remote-aware source resolution", () => {
     }
   });
 
-  async function writeServices(services: Record<string, unknown>): Promise<void> {
+  async function writeServices(
+    services: Record<string, unknown>,
+  ): Promise<void> {
     await Bun.write(configPath, JSON.stringify({ services }, null, 2));
     clearClientConfigCache();
   }
@@ -304,6 +323,55 @@ describe("remote-aware source resolution", () => {
       },
     });
     await expect(resolveSource("local")).resolves.toBe("remote-local");
+  });
+
+  test("requiresCredentials service does not fall back to local on remote connection error", async () => {
+    server.stop(true);
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/call") {
+          return Response.json({
+            success: false,
+            error: {
+              code: "CONNECTION_ERROR",
+              message:
+                "Failed to connect to HTTP MCP server: SSE error: Non-200 status code (401)",
+            },
+          });
+        }
+        if (url.pathname === "/api/services/discovery") {
+          return Response.json({
+            success: true,
+            configuredServices: ["open-brain"],
+          });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    process.env.MCP2CLI_REMOTE_URL = `http://localhost:${server.port}`;
+    await writeServices({
+      "open-brain": {
+        backend: "http",
+        url: "http://local-open-brain.example/mcp",
+        source: "remote-local",
+        requiresCredentials: true,
+      },
+    });
+
+    const result = await callViaDaemon({
+      service: "open-brain",
+      tool: "session_start",
+      params: {},
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.message).toContain("remote daemon");
+      expect(result.error.message).not.toContain("local daemon");
+      expect(result.error.message).toContain("401");
+    }
   });
 
   test("platforms prefer local when current OS is allowed", async () => {

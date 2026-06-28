@@ -20,12 +20,14 @@ export interface DaemonCallRequest {
 /** Request body for POST /list-tools -- list available tools for a service */
 export interface DaemonListToolsRequest {
   service: string;
+  fresh?: boolean;
 }
 
 /** Request body for POST /schema -- get full schema for a service.tool */
 export interface DaemonSchemaRequest {
   service: string;
   tool: string;
+  fresh?: boolean;
 }
 
 /** Successful daemon response envelope */

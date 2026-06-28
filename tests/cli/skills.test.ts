@@ -49,7 +49,9 @@ async function writeSkillFile(service: string, content: string): Promise<void> {
   await Bun.write(join(dir, "SKILL.md"), content);
 }
 
-async function captureSkills(args: string[]): Promise<{ stdout: string; exitCode: number }> {
+async function captureSkills(
+  args: string[],
+): Promise<{ stdout: string; exitCode: number }> {
   const { handleSkills } = await import("../../src/cli/commands/skills.ts");
   const lines: string[] = [];
   const origLog = console.log;
@@ -67,7 +69,9 @@ async function captureSkills(args: string[]): Promise<{ stdout: string; exitCode
     console.log = origLog;
     console.error = origErr;
   }
-  return { stdout: lines.join("\n"), exitCode: process.exitCode ?? 0 };
+  const exitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  return { stdout: lines.join("\n"), exitCode };
 }
 
 describe("skills command", () => {
@@ -108,7 +112,10 @@ describe("skills get", () => {
 
   // H1: Path traversal validation
   test("rejects path traversal in service name", async () => {
-    const { stdout, exitCode } = await captureSkills(["get", "../../../etc/passwd"]);
+    const { stdout, exitCode } = await captureSkills([
+      "get",
+      "../../../etc/passwd",
+    ]);
     expect(stdout).toContain("path traversal");
     expect(exitCode).not.toBe(0);
   });
@@ -119,7 +126,12 @@ describe("skills install", () => {
     await writeSkillFile("test-svc", "# test-svc skill content\n");
     const targetDir = join(testDir, "install-target");
 
-    const { stdout } = await captureSkills(["install", "test-svc", "--target", targetDir]);
+    const { stdout } = await captureSkills([
+      "install",
+      "test-svc",
+      "--target",
+      targetDir,
+    ]);
     expect(stdout).toContain("Installed test-svc");
 
     const installed = Bun.file(join(targetDir, "SKILL.md"));
@@ -133,7 +145,12 @@ describe("skills install", () => {
   });
 
   test("errors when skill file missing", async () => {
-    const { stdout, exitCode } = await captureSkills(["install", "nonexistent", "--target", "/tmp/x"]);
+    const { stdout, exitCode } = await captureSkills([
+      "install",
+      "nonexistent",
+      "--target",
+      "/tmp/x",
+    ]);
     expect(stdout).toContain("No skill file found");
     expect(exitCode).not.toBe(0);
   });
@@ -142,7 +159,11 @@ describe("skills install", () => {
     await writeSkillFile("test-svc", "# content\n");
     const targetDir = join(testDir, "install-eq");
 
-    const { stdout } = await captureSkills(["install", "test-svc", `--target=${targetDir}`]);
+    const { stdout } = await captureSkills([
+      "install",
+      "test-svc",
+      `--target=${targetDir}`,
+    ]);
     expect(stdout).toContain("Installed");
 
     const installed = Bun.file(join(targetDir, "SKILL.md"));
@@ -151,7 +172,12 @@ describe("skills install", () => {
 
   // H1: Path traversal validation
   test("rejects path traversal in service name", async () => {
-    const { stdout, exitCode } = await captureSkills(["install", "../etc/passwd", "--target", "/tmp/x"]);
+    const { stdout, exitCode } = await captureSkills([
+      "install",
+      "../etc/passwd",
+      "--target",
+      "/tmp/x",
+    ]);
     expect(stdout).toContain("path traversal");
     expect(exitCode).not.toBe(0);
   });
@@ -163,7 +189,12 @@ describe("skills install", () => {
     await mkdir(targetDir, { recursive: true });
     await Bun.write(join(targetDir, "SKILL.md"), "# old content\n");
 
-    const { stdout, exitCode } = await captureSkills(["install", "test-svc", "--target", targetDir]);
+    const { stdout, exitCode } = await captureSkills([
+      "install",
+      "test-svc",
+      "--target",
+      targetDir,
+    ]);
     expect(stdout).toContain("Use --force to overwrite");
     expect(exitCode).not.toBe(0);
   });
@@ -175,7 +206,13 @@ describe("skills install", () => {
     await mkdir(targetDir, { recursive: true });
     await Bun.write(join(targetDir, "SKILL.md"), "# old content\n");
 
-    const { stdout } = await captureSkills(["install", "test-svc", "--target", targetDir, "--force"]);
+    const { stdout } = await captureSkills([
+      "install",
+      "test-svc",
+      "--target",
+      targetDir,
+      "--force",
+    ]);
     expect(stdout).toContain("Overwriting existing skill bundle");
     expect(stdout).toContain("Installed test-svc");
   });
@@ -186,9 +223,14 @@ describe("skills list", () => {
     await writeCache("test-svc", [makeTool("tool_a", "Does A")]);
     const origConfig = process.env.MCP2CLI_CONFIG;
     const configPath = join(testDir, "services.json");
-    await Bun.write(configPath, JSON.stringify({
-      services: { "test-svc": { backend: "stdio", command: "echo", args: [] } },
-    }));
+    await Bun.write(
+      configPath,
+      JSON.stringify({
+        services: {
+          "test-svc": { backend: "stdio", command: "echo", args: [] },
+        },
+      }),
+    );
     process.env.MCP2CLI_CONFIG = configPath;
 
     try {
@@ -226,9 +268,14 @@ describe("skills list", () => {
 
     const origConfig = process.env.MCP2CLI_CONFIG;
     const configPath = join(testDir, "services.json");
-    await Bun.write(configPath, JSON.stringify({
-      services: { "test-svc": { backend: "stdio", command: "echo", args: [] } },
-    }));
+    await Bun.write(
+      configPath,
+      JSON.stringify({
+        services: {
+          "test-svc": { backend: "stdio", command: "echo", args: [] },
+        },
+      }),
+    );
     process.env.MCP2CLI_CONFIG = configPath;
 
     try {
@@ -250,7 +297,8 @@ describe("skills list", () => {
     await writeCache("test-svc", tools);
 
     // Compute the expected hash
-    const { computeSchemaHash } = await import("../../src/generation/skill-hash.ts");
+    const { computeSchemaHash } =
+      await import("../../src/generation/skill-hash.ts");
     const expectedHash = await computeSchemaHash(tools);
 
     const skillContent = [
@@ -269,9 +317,14 @@ describe("skills list", () => {
 
     const origConfig = process.env.MCP2CLI_CONFIG;
     const configPath = join(testDir, "services.json");
-    await Bun.write(configPath, JSON.stringify({
-      services: { "test-svc": { backend: "stdio", command: "echo", args: [] } },
-    }));
+    await Bun.write(
+      configPath,
+      JSON.stringify({
+        services: {
+          "test-svc": { backend: "stdio", command: "echo", args: [] },
+        },
+      }),
+    );
     process.env.MCP2CLI_CONFIG = configPath;
 
     try {
@@ -288,13 +341,76 @@ describe("skills list", () => {
     }
   });
 
+  test("uses access-filtered cache surface for stale detection", async () => {
+    const tools = [
+      makeTool("allowed_tool", "Allowed"),
+      makeTool("blocked_tool", "Blocked"),
+    ];
+    await writeCache("test-svc", tools);
+
+    const { computeSchemaHash } =
+      await import("../../src/generation/skill-hash.ts");
+    const expectedHash = await computeSchemaHash([tools[0]!]);
+
+    const skillContent = [
+      "---",
+      "name: test-svc",
+      "tool_count: 1",
+      "generated_at: 2025-01-01T00:00:00.000Z",
+      `schema_hash: ${expectedHash}`,
+      "triggers:",
+      "  - test-svc",
+      "---",
+      "",
+      "# test-svc",
+    ].join("\n");
+    await writeSkillFile("test-svc", skillContent);
+
+    const origConfig = process.env.MCP2CLI_CONFIG;
+    const configPath = join(testDir, "services.json");
+    await Bun.write(
+      configPath,
+      JSON.stringify({
+        services: {
+          "test-svc": {
+            backend: "stdio",
+            command: "echo",
+            args: [],
+            allowTools: ["allowed_*"],
+          },
+        },
+      }),
+    );
+    process.env.MCP2CLI_CONFIG = configPath;
+
+    try {
+      const { stdout } = await captureSkills(["list"]);
+      expect(stdout).toContain("test-svc");
+      expect(stdout).toContain("ok");
+      expect(stdout).toContain("1 tools");
+      expect(stdout).not.toContain("stale");
+      expect(stdout).not.toContain("cache has 2");
+    } finally {
+      if (origConfig !== undefined) {
+        process.env.MCP2CLI_CONFIG = origConfig;
+      } else {
+        delete process.env.MCP2CLI_CONFIG;
+      }
+    }
+  });
+
   // L11: Test --json output
   test("outputs JSON when --json flag is passed via args", async () => {
     const origConfig = process.env.MCP2CLI_CONFIG;
     const configPath = join(testDir, "services.json");
-    await Bun.write(configPath, JSON.stringify({
-      services: { "test-svc": { backend: "stdio", command: "echo", args: [] } },
-    }));
+    await Bun.write(
+      configPath,
+      JSON.stringify({
+        services: {
+          "test-svc": { backend: "stdio", command: "echo", args: [] },
+        },
+      }),
+    );
     process.env.MCP2CLI_CONFIG = configPath;
 
     try {
