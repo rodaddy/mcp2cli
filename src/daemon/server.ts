@@ -425,9 +425,13 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const tools = body.fresh
             ? await listToolsForService(conn.client)
             : await listToolsCached(conn.client, listPoolKey);
-          // #58: stamp the current fingerprint so the client can drop its own
-          // stale cache for this service on the next call (no extra round-trip).
-          const listFingerprint = await readCacheFingerprint(listPoolKey);
+          // #58: stamp the BARE-service fingerprint (not the credential pool
+          // key). The drift-hook maintains the bare entry as the canonical,
+          // credential-independent per-service signal, and the client also keys
+          // its cache by bare service -- so both sides compare the same key.
+          // Comparing a credential-scoped fingerprint against the client's bare
+          // key never converges and would clear the cache on every call.
+          const listFingerprint = await readCacheFingerprint(body.service);
           return Response.json({
             success: true,
             result: tools,
@@ -471,8 +475,8 @@ export function createDaemonServer(opts: DaemonServerOptions) {
               404,
             );
           }
-          // #58: stamp the current fingerprint (see /list-tools).
-          const schemaFingerprint = await readCacheFingerprint(schemaPoolKey);
+          // #58: stamp the BARE-service fingerprint (see /list-tools).
+          const schemaFingerprint = await readCacheFingerprint(body.service);
           return Response.json({ success: true, result, schemaFingerprint });
         } catch (err) {
           return handleEndpointError(err, pool);

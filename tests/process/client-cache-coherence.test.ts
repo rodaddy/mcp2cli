@@ -2,7 +2,13 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { writeCache, readCacheRaw } from "../../src/cache/index.ts";
+import {
+  writeCache,
+  readCacheRaw,
+  readCacheFingerprint,
+  fingerprintSchemas,
+  mapToolsToCachedSchemas,
+} from "../../src/cache/index.ts";
 import { reconcileClientCache } from "../../src/process/client.ts";
 import type { DaemonResponse } from "../../src/daemon/types.ts";
 
@@ -68,6 +74,44 @@ describe("reconcileClientCache (#58 piggyback)", () => {
       error: { code: "CONNECTION_ERROR", message: "down" },
     };
     await reconcileClientCache("open-brain", errResponse);
+    expect(await readCacheRaw("open-brain")).not.toBeNull();
+  });
+});
+
+// Real round-trip: the daemon (raw upstream tools, missing descriptions ->
+// hashToolSchema's "" default) and the client warm path (descriptions defaulted
+// to "(no description)") must derive the SAME fingerprint for the same tools.
+// This is the regression guard for the swarm-found blockers (B1: key alignment,
+// B2: description-default divergence) -- both manifested as "fingerprints never
+// match -> reconcile clears on every call."
+describe("daemon/client fingerprint convergence (#58 blocker regression)", () => {
+  test("identical upstream tools -> identical fingerprint despite description defaulting + reconcile keeps cache", async () => {
+    // Daemon side: raw MCP tools, one with NO description (undefined).
+    const rawTools = [
+      { name: "ob_search", description: "Search", inputSchema: {} },
+      { name: "ob_no_desc", inputSchema: {} }, // missing description
+    ];
+    const daemonSchemas = await mapToolsToCachedSchemas(rawTools);
+    // Daemon writes the BARE service key (what the drift-hook maintains and what
+    // the daemon now stamps), letting writeCache derive the fingerprint.
+    await writeCache("open-brain", daemonSchemas, 60_000);
+    const daemonFingerprint = await readCacheFingerprint("open-brain");
+    if (!daemonFingerprint) throw new Error("daemon fingerprint not written");
+
+    // Client warm path: the same tools, but descriptions already defaulted to
+    // "(no description)" (as getToolSchemaCached does) before hashing.
+    const clientSchemas = await mapToolsToCachedSchemas([
+      { name: "ob_search", description: "Search", inputSchema: {} },
+      { name: "ob_no_desc", description: "(no description)", inputSchema: {} },
+    ]);
+    const clientFingerprint = (await fingerprintSchemas(clientSchemas));
+
+    // The fix: both derive the SAME fingerprint for the same tools.
+    expect(clientFingerprint).toBe(daemonFingerprint);
+
+    // And therefore reconcile against the daemon's stamp must NOT clear.
+    await writeCache("open-brain", clientSchemas, 60_000);
+    await reconcileClientCache("open-brain", okResponse(daemonFingerprint));
     expect(await readCacheRaw("open-brain")).not.toBeNull();
   });
 });

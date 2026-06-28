@@ -249,8 +249,19 @@ export async function clearServiceCacheKeys(service: string): Promise<number> {
     }
 
     if (matches) {
-      await unlink(join(cacheDir, entry)).catch(() => {});
-      cleared++;
+      // Count only files actually removed. A swallowed unlink that still
+      // incremented the count would report success while a stale credential
+      // entry survives -- silently re-opening the #58 staleness it exists to fix.
+      try {
+        await unlink(join(cacheDir, entry));
+        cleared++;
+      } catch (err) {
+        log.warn("cache_unlink_failed", {
+          service,
+          entry,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 
