@@ -138,7 +138,7 @@ describe("mergeContent", () => {
     const existing = [
       "---",
       "name: old-skill",
-      "triggers: [custom-trigger, \"quoted trigger\"]",
+      'triggers: [custom-trigger, "quoted trigger"]',
       "x-owner: human",
       "---",
       "# Custom header",

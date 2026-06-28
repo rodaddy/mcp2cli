@@ -17,7 +17,10 @@ import {
 } from "../../generation/index.ts";
 import { filterTools, extractPolicy } from "../../access/filter.ts";
 import { EXIT_CODES } from "../../types/index.ts";
-import type { ConflictMode, SkillTemplateInput } from "../../generation/types.ts";
+import type {
+  ConflictMode,
+  SkillTemplateInput,
+} from "../../generation/types.ts";
 import type { SchemaOutput } from "../../schema/types.ts";
 import type { ToolSummary } from "../../schema/types.ts";
 import { join } from "node:path";
@@ -37,11 +40,45 @@ function extractTriggerKeywords(
 
   // Common stop words to exclude
   const stopWords = new Set([
-    "the", "and", "for", "with", "from", "that", "this", "will", "have",
-    "been", "were", "they", "their", "into", "when", "which", "more",
-    "some", "than", "them", "each", "also", "about", "over", "such",
-    "after", "most", "only", "other", "given", "returns", "object",
-    "type", "string", "number", "boolean", "array", "optional", "required",
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "will",
+    "have",
+    "been",
+    "were",
+    "they",
+    "their",
+    "into",
+    "when",
+    "which",
+    "more",
+    "some",
+    "than",
+    "them",
+    "each",
+    "also",
+    "about",
+    "over",
+    "such",
+    "after",
+    "most",
+    "only",
+    "other",
+    "given",
+    "returns",
+    "object",
+    "type",
+    "string",
+    "number",
+    "boolean",
+    "array",
+    "optional",
+    "required",
   ]);
 
   for (const desc of descriptions) {
@@ -132,7 +169,8 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     printError({
       error: true,
       code: "INPUT_VALIDATION_ERROR",
-      message: "Missing required argument: <service>. Usage: mcp2cli generate-skills <service>",
+      message:
+        "Missing required argument: <service>. Usage: mcp2cli generate-skills <service>",
     });
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
@@ -148,7 +186,9 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
   if (!conflictMode) {
     if (!process.stdin.isTTY) {
       conflictMode = "skip";
-      console.error("Warning: non-interactive mode, defaulting to --conflict=skip");
+      console.error(
+        "Warning: non-interactive mode, defaulting to --conflict=skip",
+      );
     } else {
       conflictMode = "skip"; // safe default even for TTY
     }
@@ -205,7 +245,8 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
       printError({
         error: true,
         code: "INPUT_VALIDATION_ERROR",
-        message: "All tools are blocked by access policy. No skills to generate.",
+        message:
+          "All tools are blocked by access policy. No skills to generate.",
       });
       process.exitCode = EXIT_CODES.VALIDATION;
       return;
@@ -213,8 +254,12 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
 
     // Get full schemas for each tool (already filtered by access control)
     const allowedToolNames = new Set(tools.map((tool) => tool.name));
-    const schemas: SchemaOutput[] = discovery.schemas.filter((schema) => allowedToolNames.has(schema.tool));
-    const cachedSchemas = discovery.cachedSchemas.filter((schema) => allowedToolNames.has(schema.name));
+    const schemas: SchemaOutput[] = discovery.schemas.filter((schema) =>
+      allowedToolNames.has(schema.tool),
+    );
+    const cachedSchemas = discovery.cachedSchemas.filter((schema) =>
+      allowedToolNames.has(schema.name),
+    );
 
     // Group tools by prefix
     const groups = detectPrefixGroups(schemas, serviceName);
@@ -232,11 +277,15 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     const existingSkillContent = await readExistingSkillFile(outputDir);
     let generatedAt: string;
     if (existingSkillContent) {
-      const existingHashMatch = existingSkillContent.match(/^schema_hash:\s*(\S+)/m);
+      const existingHashMatch = existingSkillContent.match(
+        /^schema_hash:\s*(\S+)/m,
+      );
       const existingHash = existingHashMatch?.[1];
       if (existingHash === schemaHash) {
         // Reuse existing timestamp when schema hasn't changed
-        const existingAtMatch = existingSkillContent.match(/^generated_at:\s*(\S+)/m);
+        const existingAtMatch = existingSkillContent.match(
+          /^generated_at:\s*(\S+)/m,
+        );
         generatedAt = existingAtMatch?.[1] ?? new Date().toISOString();
       } else {
         generatedAt = new Date().toISOString();
@@ -250,6 +299,7 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
       description: `MCP tools for ${serviceName}`,
       tools,
       triggerKeywords,
+      groups,
       generatedAt,
       schemaHash,
       toolCount: tools.length,
@@ -282,7 +332,9 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
     // Token budget check
     const tokenCount = estimateTokens(skillMd);
     if (tokenCount > 300) {
-      console.error(`Warning: SKILL.md estimated at ${tokenCount} tokens (target: <300)`);
+      console.error(
+        `Warning: SKILL.md estimated at ${tokenCount} tokens (target: <300)`,
+      );
     }
 
     // Generate reference files
@@ -299,13 +351,15 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
 
     // Dry-run: output plan without writing files
     if (dryRun) {
-      console.log(JSON.stringify({
-        dryRun: true,
-        service: serviceName,
-        outputDir,
-        files: [...generated.keys()],
-        tokenCount,
-      }));
+      console.log(
+        JSON.stringify({
+          dryRun: true,
+          service: serviceName,
+          outputDir,
+          files: [...generated.keys()],
+          tokenCount,
+        }),
+      );
       process.exitCode = EXIT_CODES.DRY_RUN;
       return;
     }

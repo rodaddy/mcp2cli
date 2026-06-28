@@ -94,7 +94,10 @@ afterEach(async () => {
 describe("pool HTTP with fallback", () => {
   test("connects via HTTP when gateway is reachable", async () => {
     const pool = new ConnectionPool();
-    const conn = await pool.getConnection("gateway-svc", httpWithFallbackConfig);
+    const conn = await pool.getConnection(
+      "gateway-svc",
+      httpWithFallbackConfig,
+    );
 
     expect(conn).toBeDefined();
     expect(mockConnectToHttpService).toHaveBeenCalledTimes(1);
@@ -109,7 +112,10 @@ describe("pool HTTP with fallback", () => {
     });
 
     const pool = new ConnectionPool();
-    const conn = await pool.getConnection("gateway-svc", httpWithFallbackConfig);
+    const conn = await pool.getConnection(
+      "gateway-svc",
+      httpWithFallbackConfig,
+    );
 
     expect(conn).toBeDefined();
     expect(mockConnectToHttpService).toHaveBeenCalledTimes(1);
@@ -130,7 +136,10 @@ describe("pool HTTP with fallback", () => {
     await saveState("gateway-svc", openState);
 
     const pool = new ConnectionPool();
-    const conn = await pool.getConnection("gateway-svc", httpWithFallbackConfig);
+    const conn = await pool.getConnection(
+      "gateway-svc",
+      httpWithFallbackConfig,
+    );
 
     expect(conn).toBeDefined();
     // HTTP should NOT have been attempted
@@ -257,7 +266,16 @@ describe("pool HTTP with fallback", () => {
     await pool.getConnection("gateway-svc", httpWithFallbackConfig);
 
     expect(mockConnectToService).toHaveBeenCalledTimes(1);
-    const calls = mockConnectToService.mock.calls as unknown as Array<[{ backend: string; command: string; args: string[]; env: Record<string, string> }]>;
+    const calls = mockConnectToService.mock.calls as unknown as Array<
+      [
+        {
+          backend: string;
+          command: string;
+          args: string[];
+          env: Record<string, string>;
+        },
+      ]
+    >;
     const callArg = calls[0]![0];
     expect(callArg.backend).toBe("stdio");
     expect(callArg.command).toBe("npx");

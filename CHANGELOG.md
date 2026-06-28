@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-06-28
+
+### Changed
+- `generate-skills` now emits a slim front `SKILL.md` (progressive disclosure): a routing index of tool *groups* linking to `references/*.md`, instead of inlining a full per-tool description table. Keeps the front skill under the 300-token target for large services (Open Brain dropped from ~1100 tokens). Per-tool detail remains in the reference files.
+- `parseExistingTools` reads tool names from the new group-index and flat-fallback formats (legacy quick-reference table still parsed for migration), so `--diff` and drift detection keep working.
+
 ## [0.3.1] - 2026-06-09
 
 ### Added

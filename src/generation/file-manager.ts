@@ -42,9 +42,7 @@ interface FrontmatterBlock {
 }
 
 function splitFrontmatterBlocks(frontmatter: string): FrontmatterBlock[] {
-  const body = frontmatter
-    .replace(/^---\n/, "")
-    .replace(/\n---\n?$/, "");
+  const body = frontmatter.replace(/^---\n/, "").replace(/\n---\n?$/, "");
   const blocks: FrontmatterBlock[] = [];
 
   for (const line of body.split("\n")) {
@@ -73,7 +71,9 @@ function triggerValues(block: FrontmatterBlock | undefined): string[] {
 
   const inlineScalarMatch = firstLine.match(/^[A-Za-z0-9_-]+:\s*(\S.*)$/);
   if (inlineScalarMatch) {
-    return [inlineScalarMatch[1]!.trim().replace(/^['"]|['"]$/g, "")].filter(Boolean);
+    return [inlineScalarMatch[1]!.trim().replace(/^['"]|['"]$/g, "")].filter(
+      Boolean,
+    );
   }
 
   return block.lines
@@ -82,11 +82,16 @@ function triggerValues(block: FrontmatterBlock | undefined): string[] {
     .filter((value): value is string => Boolean(value));
 }
 
-function mergeFrontmatter(existingFrontmatter: string, generatedFrontmatter: string): string {
+function mergeFrontmatter(
+  existingFrontmatter: string,
+  generatedFrontmatter: string,
+): string {
   const existingBlocks = splitFrontmatterBlocks(existingFrontmatter);
   const generatedBlocks = splitFrontmatterBlocks(generatedFrontmatter);
   const generatedKeys = new Set(generatedBlocks.map((block) => block.key));
-  const existingByKey = new Map(existingBlocks.map((block) => [block.key, block]));
+  const existingByKey = new Map(
+    existingBlocks.map((block) => [block.key, block]),
+  );
   const merged: string[] = ["---"];
 
   for (const generatedBlock of generatedBlocks) {
@@ -115,7 +120,10 @@ function mergeFrontmatter(existingFrontmatter: string, generatedFrontmatter: str
   return merged.join("\n") + "\n";
 }
 
-function mergeGeneratedFrontmatter(existing: string, generated: string): string {
+function mergeGeneratedFrontmatter(
+  existing: string,
+  generated: string,
+): string {
   const generatedFrontmatter = generated.match(FRONTMATTER_RE)?.[0];
   if (!generatedFrontmatter) {
     return existing;
@@ -123,7 +131,7 @@ function mergeGeneratedFrontmatter(existing: string, generated: string): string 
 
   if (FRONTMATTER_RE.test(existing)) {
     return existing.replace(FRONTMATTER_RE, (existingFrontmatter) =>
-      mergeFrontmatter(existingFrontmatter, generatedFrontmatter)
+      mergeFrontmatter(existingFrontmatter, generatedFrontmatter),
     );
   }
 

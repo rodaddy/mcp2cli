@@ -7,13 +7,19 @@ import { z } from "zod";
  * - "remote-local": try remote first, fall back to local if unreachable
  * When omitted, defaults to "local" (no remote URL) or "remote-local" (remote URL set).
  */
-export const SourceSchema = z.enum(["local", "remote", "remote-local"]).optional();
+export const SourceSchema = z
+  .enum(["local", "remote", "remote-local"])
+  .optional();
 export type ServiceSource = z.infer<typeof SourceSchema>;
 
-const SecretRefUrlSchema = z.string().refine(
-  (value) => (/^\$\{secret:[^}]+\}$/.test(value)) || z.string().url().safeParse(value).success,
-  { message: "Invalid url" },
-);
+const SecretRefUrlSchema = z
+  .string()
+  .refine(
+    (value) =>
+      /^\$\{secret:[^}]+\}$/.test(value) ||
+      z.string().url().safeParse(value).success,
+    { message: "Invalid url" },
+  );
 
 /**
  * Tool access control fields shared by all service backends.

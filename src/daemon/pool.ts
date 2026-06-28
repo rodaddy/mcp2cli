@@ -9,9 +9,16 @@ import { connectToHttpService } from "../connection/http-transport.ts";
 import { connectToWebSocketService } from "../connection/websocket-transport.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import type { McpConnection } from "../connection/types.ts";
-import type { ServicesConfig, HttpService, WebSocketService } from "../config/index.ts";
+import type {
+  ServicesConfig,
+  HttpService,
+  WebSocketService,
+} from "../config/index.ts";
 import { createLogger } from "../logger/index.ts";
-import { resolveServiceSecretRefs, VaultwardenSecretResolver } from "../secrets/index.ts";
+import {
+  resolveServiceSecretRefs,
+  VaultwardenSecretResolver,
+} from "../secrets/index.ts";
 import type { SecretResolver } from "../secrets/index.ts";
 import { checkDriftOnConnect } from "./drift-hook.ts";
 import { extractPolicy } from "../access/filter.ts";
@@ -52,9 +59,12 @@ export class ConnectionPool {
 
   constructor(options?: PoolOptions) {
     const envMax = parseInt(process.env.MCP2CLI_POOL_MAX ?? "", 10);
-    this._maxSize = options?.maxSize ?? (Number.isNaN(envMax) ? DEFAULT_POOL_MAX : envMax);
-    this._healthCheckTimeoutMs = options?.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
-    this.secretResolver = options?.secretResolver ?? new VaultwardenSecretResolver();
+    this._maxSize =
+      options?.maxSize ?? (Number.isNaN(envMax) ? DEFAULT_POOL_MAX : envMax);
+    this._healthCheckTimeoutMs =
+      options?.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
+    this.secretResolver =
+      options?.secretResolver ?? new VaultwardenSecretResolver();
   }
 
   /** Maximum number of concurrent connections allowed. */
@@ -103,7 +113,8 @@ export class ConnectionPool {
         log.warn("pool_nearing_limit", {
           size: this.connections.size,
           max: this._maxSize,
-          message: "Per-user credential connections may be contributing to pool usage",
+          message:
+            "Per-user credential connections may be contributing to pool usage",
         });
       }
       if (this.connections.size >= this._maxSize) {
@@ -115,7 +126,8 @@ export class ConnectionPool {
     }
 
     // Use override if provided, otherwise look up by service name
-    const rawServiceConfig = serviceConfigOverride ?? config.services[baseServiceName];
+    const rawServiceConfig =
+      serviceConfigOverride ?? config.services[baseServiceName];
     if (!rawServiceConfig) {
       throw new ConnectionError(
         `Service not found in config: ${baseServiceName}`,
@@ -132,9 +144,17 @@ export class ConnectionPool {
       );
       let connection: McpConnection;
       if (serviceConfig.backend === "http") {
-        connection = await this.connectHttpWithFallback(poolKey, baseServiceName, serviceConfig);
+        connection = await this.connectHttpWithFallback(
+          poolKey,
+          baseServiceName,
+          serviceConfig,
+        );
       } else if (serviceConfig.backend === "websocket") {
-        connection = await this.connectWebSocketWithFallback(poolKey, baseServiceName, serviceConfig);
+        connection = await this.connectWebSocketWithFallback(
+          poolKey,
+          baseServiceName,
+          serviceConfig,
+        );
       } else if (serviceConfig.backend === "stdio") {
         connection = await connectToService(serviceConfig);
       } else {
@@ -157,7 +177,9 @@ export class ConnectionPool {
         // ADV-02: Fire-and-forget drift check on new connection
         // ADV-06: Pass access policy for skill auto-regeneration filtering
         const policy = extractPolicy(serviceConfig);
-        checkDriftOnConnect(baseServiceName, connection, policy).catch(() => {});
+        checkDriftOnConnect(baseServiceName, connection, policy).catch(
+          () => {},
+        );
         return connection;
       },
       (err) => {
@@ -234,15 +256,22 @@ export class ConnectionPool {
     const PRECONNECT_CONCURRENCY = 4;
     const PRECONNECT_TIMEOUT_MS = 15_000;
 
-    const withTimeout = (name: string) => Promise.race([
-      this.getConnection(name, config),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`preconnect timeout: ${name}`)), PRECONNECT_TIMEOUT_MS),
-      ),
-    ]);
+    const withTimeout = (name: string) =>
+      Promise.race([
+        this.getConnection(name, config),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`preconnect timeout: ${name}`)),
+            PRECONNECT_TIMEOUT_MS,
+          ),
+        ),
+      ]);
 
     const names = Object.entries(config.services)
-      .filter(([, service]) => service.preconnect !== false && service.requiresCredentials !== true)
+      .filter(
+        ([, service]) =>
+          service.preconnect !== false && service.requiresCredentials !== true,
+      )
       .map(([name]) => name);
     log.info("preconnect_start", { count: names.length });
 
@@ -259,7 +288,8 @@ export class ConnectionPool {
     if (failed > 0) {
       allResults.forEach((r, idx) => {
         if (r.status === "rejected") {
-          const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+          const msg =
+            r.reason instanceof Error ? r.reason.message : String(r.reason);
           log.warn("preconnect_failed", { service: names[idx], error: msg });
         }
       });
@@ -419,7 +449,10 @@ export class ConnectionPool {
       await Promise.race([
         conn.client.listTools(),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("health check timeout")), this._healthCheckTimeoutMs),
+          setTimeout(
+            () => reject(new Error("health check timeout")),
+            this._healthCheckTimeoutMs,
+          ),
         ),
       ]);
       return true;

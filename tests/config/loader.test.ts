@@ -258,7 +258,10 @@ describe("loadConfig", () => {
       const config = await loadConfig(configPath);
       expect(Object.keys(config.services).sort()).toEqual(["local", "remote"]);
       const secondLoad = await loadConfig(configPath);
-      expect(Object.keys(secondLoad.services).sort()).toEqual(["local", "remote"]);
+      expect(Object.keys(secondLoad.services).sort()).toEqual([
+        "local",
+        "remote",
+      ]);
       expect(requests).toBe(1);
     } finally {
       server.stop(true);
@@ -267,7 +270,9 @@ describe("loadConfig", () => {
   });
 
   test("cached import state still requires current importUrl policy", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "mcp2cli-import-cache-policy-test-"));
+    const dir = await mkdtemp(
+      join(tmpdir(), "mcp2cli-import-cache-policy-test-"),
+    );
     const configPath = join(dir, "services.json");
     const server = Bun.serve({
       port: 0,
@@ -353,14 +358,20 @@ describe("loadConfig", () => {
   });
 
   test("importUrl token requires an explicit host allowlist", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "mcp2cli-import-auth-allowlist-test-"));
+    const dir = await mkdtemp(
+      join(tmpdir(), "mcp2cli-import-auth-allowlist-test-"),
+    );
     const configPath = join(dir, "services.json");
     let requests = 0;
     const server = Bun.serve({
       port: 0,
       fetch() {
         requests++;
-        return Response.json({ services: { remote: { backend: "http", url: "http://ct216.example/mcp" } } });
+        return Response.json({
+          services: {
+            remote: { backend: "http", url: "http://ct216.example/mcp" },
+          },
+        });
       },
     });
     try {
@@ -393,7 +404,11 @@ describe("loadConfig", () => {
       port: 0,
       fetch(req) {
         redirectedAuthHeader = req.headers.get("authorization");
-        return Response.json({ services: { remote: { backend: "http", url: "http://ct216.example/mcp" } } });
+        return Response.json({
+          services: {
+            remote: { backend: "http", url: "http://ct216.example/mcp" },
+          },
+        });
       },
     });
     const origin = Bun.serve({
@@ -401,7 +416,9 @@ describe("loadConfig", () => {
       fetch() {
         return new Response(null, {
           status: 302,
-          headers: { Location: `http://127.0.0.1:${target.port}/api/services/export` },
+          headers: {
+            Location: `http://127.0.0.1:${target.port}/api/services/export`,
+          },
         });
       },
     });
@@ -438,7 +455,11 @@ describe("loadConfig", () => {
       port: 0,
       fetch(req) {
         authHeader = req.headers.get("authorization");
-        return Response.json({ services: { remote: { backend: "http", url: "http://ct216.example/mcp" } } });
+        return Response.json({
+          services: {
+            remote: { backend: "http", url: "http://ct216.example/mcp" },
+          },
+        });
       },
     });
     try {
@@ -490,7 +511,9 @@ describe("loadConfig", () => {
   });
 
   test("importUrl blocks IPv4-mapped IPv6 loopback hosts", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "mcp2cli-import-mapped-ipv6-test-"));
+    const dir = await mkdtemp(
+      join(tmpdir(), "mcp2cli-import-mapped-ipv6-test-"),
+    );
     const configPath = join(dir, "services.json");
     try {
       process.env.MCP2CLI_IMPORT_ALLOW_HTTP = "1";

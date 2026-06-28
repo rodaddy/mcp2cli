@@ -7,9 +7,17 @@ import type { ToolSummary } from "../schema/types.ts";
 import type { AccessPolicy } from "../access/types.ts";
 import type { SkillTemplateInput } from "./types.ts";
 import { filterTools } from "../access/filter.ts";
-import { generateSkillMd, generateReferenceMd, estimateTokens } from "./templates.ts";
+import {
+  generateSkillMd,
+  generateReferenceMd,
+  estimateTokens,
+} from "./templates.ts";
 import { detectPrefixGroups } from "./grouping.ts";
-import { resolveOutputDir, planFileWrites, executeFileWrites } from "./file-manager.ts";
+import {
+  resolveOutputDir,
+  planFileWrites,
+  executeFileWrites,
+} from "./file-manager.ts";
 import { extractManualSections, injectManualSections } from "./preserve.ts";
 import { computeSchemaHash } from "./skill-hash.ts";
 import { createLogger } from "../logger/index.ts";
@@ -70,23 +78,42 @@ export async function autoRegenerateSkills(
     const resolvedDir = outputDir ?? resolveOutputDir(serviceName);
     const existingSkillPath = join(resolvedDir, "SKILL.md");
     const existingFile = Bun.file(existingSkillPath);
-    const existingContent = await existingFile.exists() ? await existingFile.text() : null;
+    const existingContent = (await existingFile.exists())
+      ? await existingFile.text()
+      : null;
 
     // Reuse existing timestamp if hash hasn't changed
     let generatedAt = new Date().toISOString();
     if (existingContent) {
       const existingHashMatch = existingContent.match(/^schema_hash:\s*(\S+)/m);
       if (existingHashMatch?.[1] === schemaHash) {
-        const existingAtMatch = existingContent.match(/^generated_at:\s*(\S+)/m);
+        const existingAtMatch = existingContent.match(
+          /^generated_at:\s*(\S+)/m,
+        );
         generatedAt = existingAtMatch?.[1] ?? generatedAt;
       }
     }
+
+    // Build schemas for grouping + reference file generation.
+    // Use minimal SchemaOutput objects from ToolSummary data.
+    const schemas = filteredTools.map((t) => ({
+      tool: t.name,
+      description: t.description,
+      inputSchema: {} as object,
+      usage: `mcp2cli ${serviceName} ${t.name}`,
+    }));
+
+    const groups = detectPrefixGroups(schemas, serviceName);
 
     const input: SkillTemplateInput = {
       serviceName,
       description: `MCP tools for ${serviceName}`,
       tools: filteredTools,
       triggerKeywords: [serviceName],
+      // Pass groups so auto-regen emits the same slim group-routing index as a
+      // manual `generate-skills` run; without it the drift hook regenerated the
+      // flat fallback format, diverging from the manual path.
+      groups,
       generatedAt,
       schemaHash,
       toolCount: filteredTools.length,
@@ -103,17 +130,6 @@ export async function autoRegenerateSkills(
         result.manualSectionsPreserved = manualSections.length;
       }
     }
-
-    // Build schemas for reference file generation
-    // Use minimal SchemaOutput objects from ToolSummary data
-    const schemas = filteredTools.map((t) => ({
-      tool: t.name,
-      description: t.description,
-      inputSchema: {} as object,
-      usage: `mcp2cli ${serviceName} ${t.name}`,
-    }));
-
-    const groups = detectPrefixGroups(schemas, serviceName);
 
     // Collect generated files
     const generated = new Map<string, string>();

@@ -16,7 +16,11 @@ import type {
   DaemonListenConfig,
 } from "./types.ts";
 import { formatToolResult } from "../invocation/format.ts";
-import { listToolsCached, getToolSchemaCached, resolveToolNameCached } from "../schema/cached.ts";
+import {
+  listToolsCached,
+  getToolSchemaCached,
+  resolveToolNameCached,
+} from "../schema/cached.ts";
 import { getToolSchema, listToolsForService } from "../schema/introspect.ts";
 import { auditToolCall, sanitizeParams } from "../logger/audit.ts";
 import { checkToolAccess, extractPolicy } from "../access/index.ts";
@@ -30,7 +34,11 @@ import type { AuthProvider, AuthContext } from "./auth-provider.ts";
 import type { MetricsCollector } from "./metrics.ts";
 import { ConfigManager, ConfigManagerError } from "./config-manager.ts";
 import type { CredentialManager } from "../credentials/index.ts";
-import { mergeCredentials, userPoolKey, applyCallerTemplates } from "./credential-merge.ts";
+import {
+  mergeCredentials,
+  userPoolKey,
+  applyCallerTemplates,
+} from "./credential-merge.ts";
 import type { CallerContext } from "./credential-merge.ts";
 import { handleCredentialRoutes } from "./routes/credentials.ts";
 import { renderUI } from "./ui.ts";
@@ -79,10 +87,21 @@ function errorResponse(
  * Returns the Bun.serve() server instance.
  */
 export function createDaemonServer(opts: DaemonServerOptions) {
-  const { listenConfig, pool, config, configManager, credentialManager, idleTimer, onShutdown, authProvider, metrics } = opts;
+  const {
+    listenConfig,
+    pool,
+    config,
+    configManager,
+    credentialManager,
+    idleTimer,
+    onShutdown,
+    authProvider,
+    metrics,
+  } = opts;
 
   // Use configManager's live config for pool lookups when available
-  const getConfig = (): ServicesConfig => configManager ? configManager.getServices() : config;
+  const getConfig = (): ServicesConfig =>
+    configManager ? configManager.getServices() : config;
 
   /** Resolve per-user credential pool key and optional service config override. */
   function resolveCredentialPool(
@@ -90,7 +109,10 @@ export function createDaemonServer(opts: DaemonServerOptions) {
     cm: CredentialManager | undefined,
     authContext: AuthContext | null,
     currentConfig: ServicesConfig,
-  ): { poolKey: string; serviceConfigOverride?: import("../config/index.ts").ServiceConfig } {
+  ): {
+    poolKey: string;
+    serviceConfigOverride?: import("../config/index.ts").ServiceConfig;
+  } {
     const caller: CallerContext | undefined = authContext
       ? { id: authContext.userId, role: authContext.role }
       : undefined;
@@ -99,18 +121,26 @@ export function createDaemonServer(opts: DaemonServerOptions) {
     if (cm && authContext) {
       const resolved = cm.resolveWithSource(authContext.userId, service);
       if (resolved && baseCfg) {
-        const poolKey = resolved.source === "default"
-          ? service
-          : userPoolKey(service, `${resolved.source}:${resolved.identity}`);
+        const poolKey =
+          resolved.source === "default"
+            ? service
+            : userPoolKey(service, `${resolved.source}:${resolved.identity}`);
         return {
           poolKey,
-          serviceConfigOverride: mergeCredentials(baseCfg, resolved.credential, caller),
+          serviceConfigOverride: mergeCredentials(
+            baseCfg,
+            resolved.credential,
+            caller,
+          ),
         };
       }
     }
 
     if (baseCfg?.requiresCredentials) {
-      throw new MissingServiceCredentialError(service, authContext?.userId ?? "anonymous");
+      throw new MissingServiceCredentialError(
+        service,
+        authContext?.userId ?? "anonymous",
+      );
     }
 
     if (caller && baseCfg && hasCallerTemplates(baseCfg)) {
@@ -123,7 +153,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
     return { poolKey: service };
   }
 
-  function hasCallerTemplates(config: import("../config/index.ts").ServiceConfig): boolean {
+  function hasCallerTemplates(
+    config: import("../config/index.ts").ServiceConfig,
+  ): boolean {
     const check = (val: string) => val.includes("${caller.");
     if ("headers" in config && config.headers) {
       if (Object.values(config.headers).some(check)) return true;
@@ -135,9 +167,10 @@ export function createDaemonServer(opts: DaemonServerOptions) {
   }
 
   // Build listen options based on mode
-  const listenOpts = listenConfig.mode === "unix"
-    ? { unix: listenConfig.socketPath }
-    : { hostname: listenConfig.hostname, port: listenConfig.port };
+  const listenOpts =
+    listenConfig.mode === "unix"
+      ? { unix: listenConfig.socketPath }
+      : { hostname: listenConfig.hostname, port: listenConfig.port };
 
   return Bun.serve({
     ...listenOpts,
@@ -158,7 +191,12 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         // RBAC permission check
         const denied = checkPermission(req, authCtx);
         if (denied) {
-          return errorResponse("AUTH_ERROR", `Permission denied: ${denied} requires higher role`, undefined, 403);
+          return errorResponse(
+            "AUTH_ERROR",
+            `Permission denied: ${denied} requires higher role`,
+            undefined,
+            403,
+          );
         }
       }
 
@@ -193,15 +231,31 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           });
 
           // Resolve per-user credentials and determine pool key
-          const { poolKey, serviceConfigOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
+          const { poolKey, serviceConfigOverride } = resolveCredentialPool(
+            body.service,
+            credentialManager,
+            authCtx,
+            getConfig(),
+          );
 
-          const conn = await pool.getConnection(poolKey, getConfig(), serviceConfigOverride, body.service);
+          const conn = await pool.getConnection(
+            poolKey,
+            getConfig(),
+            serviceConfigOverride,
+            body.service,
+          );
 
           // MEM-02: AbortSignal timeout on tool calls
           // Priority: per-service config > MCP2CLI_TOOL_TIMEOUT env > 30s default
-          const serviceConfig = serviceConfigOverride ?? getConfig().services[body.service];
-          const perServiceTimeout = serviceConfig && "timeout" in serviceConfig ? serviceConfig.timeout : undefined;
-          const timeout = perServiceTimeout ?? parseInt(process.env.MCP2CLI_TOOL_TIMEOUT ?? "30000", 10);
+          const serviceConfig =
+            serviceConfigOverride ?? getConfig().services[body.service];
+          const perServiceTimeout =
+            serviceConfig && "timeout" in serviceConfig
+              ? serviceConfig.timeout
+              : undefined;
+          const timeout =
+            perServiceTimeout ??
+            parseInt(process.env.MCP2CLI_TOOL_TIMEOUT ?? "30000", 10);
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), timeout);
 
@@ -212,10 +266,17 @@ export function createDaemonServer(opts: DaemonServerOptions) {
 
           let resolvedTool = body.tool;
           try {
-            const { resolvedName } = await resolveToolNameCached(conn.client, body.tool, poolKey);
+            const { resolvedName } = await resolveToolNameCached(
+              conn.client,
+              body.tool,
+              poolKey,
+            );
             resolvedTool = resolvedName;
-          } catch { /* cache/listTools unavailable, use original name */ }
-          callResolvedTool = resolvedTool !== body.tool ? resolvedTool : undefined;
+          } catch {
+            /* cache/listTools unavailable, use original name */
+          }
+          callResolvedTool =
+            resolvedTool !== body.tool ? resolvedTool : undefined;
 
           // Access control on resolved tool name (M7)
           if (serviceConfig) {
@@ -223,7 +284,12 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             const accessResult = checkToolAccess(resolvedTool, policy);
             if (!accessResult.allowed) {
               callError = "Tool blocked by access policy";
-              return errorResponse("TOOL_BLOCKED", `Tool '${resolvedTool}' is blocked by access policy`, undefined, 403);
+              return errorResponse(
+                "TOOL_BLOCKED",
+                `Tool '${resolvedTool}' is blocked by access policy`,
+                undefined,
+                403,
+              );
             }
           }
 
@@ -246,10 +312,12 @@ export function createDaemonServer(opts: DaemonServerOptions) {
               }),
               new Promise<never>((_, reject) => {
                 controller.signal.addEventListener("abort", () =>
-                  reject(new ToolError(
-                    `Tool call timed out after ${timeout}ms`,
-                    body.tool,
-                  )),
+                  reject(
+                    new ToolError(
+                      `Tool call timed out after ${timeout}ms`,
+                      body.tool,
+                    ),
+                  ),
                 );
               }),
             ]);
@@ -308,7 +376,13 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             ...(callError ? { error: callError } : {}),
           });
 
-          metrics.onRequestEnd(callService, callTool, success, duration, caller?.userId);
+          metrics.onRequestEnd(
+            callService,
+            callTool,
+            success,
+            duration,
+            caller?.userId,
+          );
           auditToolCall({
             path: "daemon",
             userId: caller?.userId,
@@ -332,8 +406,21 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         idleTimer.onRequestStart();
         try {
           const body = (await req.json()) as DaemonListToolsRequest;
-          const { poolKey: listPoolKey, serviceConfigOverride: listServiceOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
-          const conn = await pool.getConnection(listPoolKey, getConfig(), listServiceOverride, body.service);
+          const {
+            poolKey: listPoolKey,
+            serviceConfigOverride: listServiceOverride,
+          } = resolveCredentialPool(
+            body.service,
+            credentialManager,
+            authCtx,
+            getConfig(),
+          );
+          const conn = await pool.getConnection(
+            listPoolKey,
+            getConfig(),
+            listServiceOverride,
+            body.service,
+          );
           const tools = body.fresh
             ? await listToolsForService(conn.client)
             : await listToolsCached(conn.client, listPoolKey);
@@ -350,15 +437,24 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         idleTimer.onRequestStart();
         try {
           const body = (await req.json()) as DaemonSchemaRequest;
-          const { poolKey: schemaPoolKey, serviceConfigOverride: schemaServiceOverride } = resolveCredentialPool(body.service, credentialManager, authCtx, getConfig());
-          const conn = await pool.getConnection(schemaPoolKey, getConfig(), schemaServiceOverride, body.service);
+          const {
+            poolKey: schemaPoolKey,
+            serviceConfigOverride: schemaServiceOverride,
+          } = resolveCredentialPool(
+            body.service,
+            credentialManager,
+            authCtx,
+            getConfig(),
+          );
+          const conn = await pool.getConnection(
+            schemaPoolKey,
+            getConfig(),
+            schemaServiceOverride,
+            body.service,
+          );
           const result = body.fresh
             ? await getToolSchema(conn.client, body.tool, schemaPoolKey)
-            : await getToolSchemaCached(
-              conn.client,
-              body.tool,
-              schemaPoolKey,
-            );
+            : await getToolSchemaCached(conn.client, body.tool, schemaPoolKey);
           if (result === null) {
             return errorResponse(
               "UNKNOWN_COMMAND",
@@ -405,10 +501,13 @@ export function createDaemonServer(opts: DaemonServerOptions) {
       // GET /metrics -- Prometheus metrics (auth-exempt)
       if (path === "/metrics" && req.method === "GET") {
         const body = metrics.render(pool.size, pool.baseServiceNames, {
-          includeCallerMetrics: process.env.MCP2CLI_METRICS_INCLUDE_CALLER === "1",
+          includeCallerMetrics:
+            process.env.MCP2CLI_METRICS_INCLUDE_CALLER === "1",
         });
         return new Response(body, {
-          headers: { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" },
+          headers: {
+            "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+          },
         });
       }
 
@@ -416,9 +515,17 @@ export function createDaemonServer(opts: DaemonServerOptions) {
       if (userMetricsMatch && req.method === "GET") {
         const userId = decodeURIComponent(userMetricsMatch[1]!);
         if (authCtx && authCtx.role !== "admin" && authCtx.userId !== userId) {
-          return errorResponse("AUTH_ERROR", "Permission denied: cannot read metrics for another user", undefined, 403);
+          return errorResponse(
+            "AUTH_ERROR",
+            "Permission denied: cannot read metrics for another user",
+            undefined,
+            403,
+          );
         }
-        return Response.json({ success: true, ...metrics.getUserBreakdown(userId) });
+        return Response.json({
+          success: true,
+          ...metrics.getUserBreakdown(userId),
+        });
       }
 
       // POST /shutdown -- graceful shutdown
@@ -431,17 +538,36 @@ export function createDaemonServer(opts: DaemonServerOptions) {
       // POST /api/auth/login -- exchange username+password for bearer token (auth-exempt)
       if (path === "/api/auth/login" && req.method === "POST") {
         try {
-          const body = await req.json() as { username?: string; password?: string };
+          const body = (await req.json()) as {
+            username?: string;
+            password?: string;
+          };
           if (!body.username || !body.password) {
-            return errorResponse("INPUT_VALIDATION_ERROR", "Missing username or password", undefined, 400);
+            return errorResponse(
+              "INPUT_VALIDATION_ERROR",
+              "Missing username or password",
+              undefined,
+              400,
+            );
           }
           if (!(authProvider instanceof TokenAuthProvider)) {
-            return errorResponse("AUTH_ERROR", "Login not supported with current auth provider", undefined, 501);
+            return errorResponse(
+              "AUTH_ERROR",
+              "Login not supported with current auth provider",
+              undefined,
+              501,
+            );
           }
-          const result = authProvider.authenticateBasic(body.username, body.password);
+          const result = authProvider.authenticateBasic(
+            body.username,
+            body.password,
+          );
           if (!result) {
             metrics.onAuthFailure();
-            return Response.json({ success: false, error: "Invalid username or password" }, { status: 401 });
+            return Response.json(
+              { success: false, error: "Invalid username or password" },
+              { status: 401 },
+            );
           }
           return Response.json({
             success: true,
@@ -450,22 +576,42 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             role: result.ctx.role,
           });
         } catch {
-          return errorResponse("INPUT_VALIDATION_ERROR", "Invalid request body", undefined, 400);
+          return errorResponse(
+            "INPUT_VALIDATION_ERROR",
+            "Invalid request body",
+            undefined,
+            400,
+          );
         }
       }
 
       // POST /api/auth/refresh -- rotate a valid near-expiry token from tokens.json
       if (path === "/api/auth/refresh" && req.method === "POST") {
         if (!(authProvider instanceof TokenAuthProvider)) {
-          return errorResponse("AUTH_ERROR", "Token refresh not supported with current auth provider", undefined, 501);
+          return errorResponse(
+            "AUTH_ERROR",
+            "Token refresh not supported with current auth provider",
+            undefined,
+            501,
+          );
         }
         const token = extractBearerToken(req);
         if (!token) {
-          return errorResponse("AUTH_ERROR", "Missing bearer token", undefined, 401);
+          return errorResponse(
+            "AUTH_ERROR",
+            "Missing bearer token",
+            undefined,
+            401,
+          );
         }
         const result = await authProvider.refreshBearerToken(token);
         if (!result.ok) {
-          return errorResponse("AUTH_ERROR", result.message, undefined, result.status);
+          return errorResponse(
+            "AUTH_ERROR",
+            result.message,
+            undefined,
+            result.status,
+          );
         }
         return Response.json({
           success: true,
@@ -501,7 +647,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             name,
             backend: svc.backend,
             connected: pool.baseServiceNames.includes(name),
-            ...(svc.backend !== "stdio" && "url" in svc ? { url: svc.url } : {}),
+            ...(svc.backend !== "stdio" && "url" in svc
+              ? { url: svc.url }
+              : {}),
           }));
           return Response.json({ success: true, services });
         }
@@ -514,17 +662,36 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         // POST /api/services -- add a service { name, config }
         if (path === "/api/services" && req.method === "POST") {
           try {
-            const body = await req.json() as { name: string; config: unknown };
+            const body = (await req.json()) as {
+              name: string;
+              config: unknown;
+            };
             if (!body.name || !body.config) {
-              return errorResponse("INPUT_VALIDATION_ERROR", "Missing 'name' or 'config' field", undefined, 400);
+              return errorResponse(
+                "INPUT_VALIDATION_ERROR",
+                "Missing 'name' or 'config' field",
+                undefined,
+                400,
+              );
             }
             await configManager.addService(body.name, body.config);
-            return Response.json({ success: true, message: `Service '${body.name}' added` }, { status: 201 });
+            return Response.json(
+              { success: true, message: `Service '${body.name}' added` },
+              { status: 201 },
+            );
           } catch (err) {
             if (err instanceof ConfigManagerError) {
-              return errorResponse("INPUT_VALIDATION_ERROR", err.message, undefined, 400);
+              return errorResponse(
+                "INPUT_VALIDATION_ERROR",
+                err.message,
+                undefined,
+                400,
+              );
             }
-            return errorResponse("INTERNAL_ERROR", err instanceof Error ? err.message : String(err));
+            return errorResponse(
+              "INTERNAL_ERROR",
+              err instanceof Error ? err.message : String(err),
+            );
           }
         }
 
@@ -533,17 +700,33 @@ export function createDaemonServer(opts: DaemonServerOptions) {
         if (putMatch && req.method === "PUT") {
           try {
             const name = decodeURIComponent(putMatch[1]!);
-            const body = await req.json() as { config: unknown };
+            const body = (await req.json()) as { config: unknown };
             if (!body.config) {
-              return errorResponse("INPUT_VALIDATION_ERROR", "Missing 'config' field", undefined, 400);
+              return errorResponse(
+                "INPUT_VALIDATION_ERROR",
+                "Missing 'config' field",
+                undefined,
+                400,
+              );
             }
             await configManager.updateService(name, body.config);
-            return Response.json({ success: true, message: `Service '${name}' updated` });
+            return Response.json({
+              success: true,
+              message: `Service '${name}' updated`,
+            });
           } catch (err) {
             if (err instanceof ConfigManagerError) {
-              return errorResponse("INPUT_VALIDATION_ERROR", err.message, undefined, 400);
+              return errorResponse(
+                "INPUT_VALIDATION_ERROR",
+                err.message,
+                undefined,
+                400,
+              );
             }
-            return errorResponse("INTERNAL_ERROR", err instanceof Error ? err.message : String(err));
+            return errorResponse(
+              "INTERNAL_ERROR",
+              err instanceof Error ? err.message : String(err),
+            );
           }
         }
 
@@ -553,12 +736,23 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           try {
             const name = decodeURIComponent(deleteMatch[1]!);
             await configManager.removeService(name);
-            return Response.json({ success: true, message: `Service '${name}' removed` });
+            return Response.json({
+              success: true,
+              message: `Service '${name}' removed`,
+            });
           } catch (err) {
             if (err instanceof ConfigManagerError) {
-              return errorResponse("INPUT_VALIDATION_ERROR", err.message, undefined, 400);
+              return errorResponse(
+                "INPUT_VALIDATION_ERROR",
+                err.message,
+                undefined,
+                400,
+              );
             }
-            return errorResponse("INTERNAL_ERROR", err instanceof Error ? err.message : String(err));
+            return errorResponse(
+              "INTERNAL_ERROR",
+              err instanceof Error ? err.message : String(err),
+            );
           }
         }
 
@@ -569,7 +763,12 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             const name = decodeURIComponent(statusMatch[1]!);
             const svc = configManager.getService(name);
             if (!svc) {
-              return errorResponse("UNKNOWN_COMMAND", `Service not found: ${name}`, undefined, 404);
+              return errorResponse(
+                "UNKNOWN_COMMAND",
+                `Service not found: ${name}`,
+                undefined,
+                404,
+              );
             }
             const connected = pool.baseServiceNames.includes(name);
             let toolCount = 0;
@@ -578,7 +777,9 @@ export function createDaemonServer(opts: DaemonServerOptions) {
                 const conn = await pool.getConnection(name, getConfig());
                 const tools = await listToolsCached(conn.client, name);
                 toolCount = tools.length;
-              } catch { /* connection may have gone stale */ }
+              } catch {
+                /* connection may have gone stale */
+              }
             }
             return Response.json({
               success: true,
@@ -588,7 +789,10 @@ export function createDaemonServer(opts: DaemonServerOptions) {
               toolCount,
             });
           } catch (err) {
-            return errorResponse("INTERNAL_ERROR", err instanceof Error ? err.message : String(err));
+            return errorResponse(
+              "INTERNAL_ERROR",
+              err instanceof Error ? err.message : String(err),
+            );
           }
         }
 
@@ -599,16 +803,24 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             return Response.json({ success: true, ...diff });
           } catch (err) {
             if (err instanceof ConfigManagerError) {
-              return errorResponse("INPUT_VALIDATION_ERROR", err.message, undefined, 400);
+              return errorResponse(
+                "INPUT_VALIDATION_ERROR",
+                err.message,
+                undefined,
+                400,
+              );
             }
-            return errorResponse("INTERNAL_ERROR", err instanceof Error ? err.message : String(err));
+            return errorResponse(
+              "INTERNAL_ERROR",
+              err instanceof Error ? err.message : String(err),
+            );
           }
         }
 
         // POST /api/services/import -- import from URL { url, mode?, repo?, branch?, path? }
         if (path === "/api/services/import" && req.method === "POST") {
           try {
-            const body = await req.json() as {
+            const body = (await req.json()) as {
               url?: string;
               mode?: "merge" | "replace";
               repo?: string;
@@ -624,22 +836,44 @@ export function createDaemonServer(opts: DaemonServerOptions) {
               );
             }
             if (!importUrl) {
-              return errorResponse("INPUT_VALIDATION_ERROR", "Missing 'url' or 'repo' field", undefined, 400);
+              return errorResponse(
+                "INPUT_VALIDATION_ERROR",
+                "Missing 'url' or 'repo' field",
+                undefined,
+                400,
+              );
             }
-            const diff = await configManager.importFromUrl(importUrl, body.mode ?? "merge");
+            const diff = await configManager.importFromUrl(
+              importUrl,
+              body.mode ?? "merge",
+            );
             return Response.json({ success: true, url: importUrl, ...diff });
           } catch (err) {
             if (err instanceof ConfigManagerError) {
-              return errorResponse("INPUT_VALIDATION_ERROR", err.message, undefined, 400);
+              return errorResponse(
+                "INPUT_VALIDATION_ERROR",
+                err.message,
+                undefined,
+                400,
+              );
             }
-            return errorResponse("INTERNAL_ERROR", err instanceof Error ? err.message : String(err));
+            return errorResponse(
+              "INTERNAL_ERROR",
+              err instanceof Error ? err.message : String(err),
+            );
           }
         }
       }
 
       // --- Credential management API routes (require credentialManager) ---
       if (credentialManager) {
-        const credResponse = await handleCredentialRoutes(req, url, path, credentialManager, authCtx);
+        const credResponse = await handleCredentialRoutes(
+          req,
+          url,
+          path,
+          credentialManager,
+          authCtx,
+        );
         if (credResponse) return credResponse;
       }
 
@@ -660,10 +894,7 @@ function extractBearerToken(req: Request): string | null {
 }
 
 /** Shared error handler for /call, /list-tools, /schema endpoints */
-function handleEndpointError(
-  err: unknown,
-  _pool: ConnectionPool,
-): Response {
+function handleEndpointError(err: unknown, _pool: ConnectionPool): Response {
   if (err instanceof ConnectionError) {
     return errorResponse("CONNECTION_ERROR", err.message, err.reason);
   }

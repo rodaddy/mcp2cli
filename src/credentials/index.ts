@@ -1,12 +1,6 @@
-export {
-  CredentialsConfigSchema,
-  ServiceCredentialSchema,
-} from "./schema.ts";
+export { CredentialsConfigSchema, ServiceCredentialSchema } from "./schema.ts";
 
-export type {
-  CredentialsConfig,
-  ServiceCredential,
-} from "./schema.ts";
+export type { CredentialsConfig, ServiceCredential } from "./schema.ts";
 
 export {
   CredentialManager,

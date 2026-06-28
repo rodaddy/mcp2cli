@@ -8,7 +8,10 @@ import type { ServicesConfig } from "../../src/config/index.ts";
 // Mock connectToService before importing the pool
 const mockConnectToService = mock(async () => {
   const conn: McpConnection = {
-    client: { callTool: mock(() => Promise.resolve({})), listTools: mock(() => Promise.resolve({ tools: [] })) } as never,
+    client: {
+      callTool: mock(() => Promise.resolve({})),
+      listTools: mock(() => Promise.resolve({ tools: [] })),
+    } as never,
     close: mock(() => Promise.resolve()),
   };
   return conn;
@@ -153,7 +156,9 @@ describe("ConnectionPool", () => {
     await pool.getConnection("secreted", config);
 
     expect(mockConnectToService).toHaveBeenCalledTimes(1);
-    const calls = mockConnectToService.mock.calls as unknown as Array<[unknown]>;
+    const calls = mockConnectToService.mock.calls as unknown as Array<
+      [unknown]
+    >;
     expect(calls[0]![0]).toEqual({
       backend: "http",
       url: "http://resolved.example/mcp",
@@ -198,7 +203,10 @@ describe("ConnectionPool", () => {
   });
 
   test("closeServicePattern only closes entries for the matching base service", async () => {
-    const unrelated = await pool.getConnection("svc::with-delimiter", testConfig);
+    const unrelated = await pool.getConnection(
+      "svc::with-delimiter",
+      testConfig,
+    );
     const credentialed = await pool.getConnection(
       "credential:test",
       testConfig,
@@ -233,7 +241,10 @@ describe("ConnectionPool", () => {
         new Promise((resolve) => {
           setTimeout(() => {
             resolve({
-              client: { callTool: mock(() => Promise.resolve({})), listTools: mock(() => Promise.resolve({ tools: [] })) } as never,
+              client: {
+                callTool: mock(() => Promise.resolve({})),
+                listTools: mock(() => Promise.resolve({ tools: [] })),
+              } as never,
               close: mock(() => Promise.resolve()),
             });
           }, 50);

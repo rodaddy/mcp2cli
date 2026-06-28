@@ -91,8 +91,14 @@ async function maybeImportConfig(
   if (localConfig.importTtlSeconds !== undefined) {
     const ttlSeconds = localConfig.importTtlSeconds;
     const state = await readImportState(localPath);
-    const ageMs = state ? Date.now() - state.importedAt : Number.POSITIVE_INFINITY;
-    if (ttlSeconds > 0 && state?.url === localConfig.importUrl && ageMs < ttlSeconds * 1000) {
+    const ageMs = state
+      ? Date.now() - state.importedAt
+      : Number.POSITIVE_INFINITY;
+    if (
+      ttlSeconds > 0 &&
+      state?.url === localConfig.importUrl &&
+      ageMs < ttlSeconds * 1000
+    ) {
       try {
         await validateImportUrl(localConfig.importUrl);
       } catch (err) {
@@ -114,7 +120,9 @@ async function maybeImportConfig(
     const importedRaw = await response.json();
     const imported = ServicesConfigSchema.safeParse(importedRaw);
     if (!imported.success) {
-      const issues = imported.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
+      const issues = imported.error.issues
+        .map((i) => `${i.path.join(".")}: ${i.message}`)
+        .join(", ");
       throw new Error(`validation failed: ${issues}`);
     }
     const merged = mergeImportedConfig(localConfig, imported.data);
@@ -140,7 +148,9 @@ async function fetchImportUrl(rawUrl: string): Promise<Response> {
   let currentUrl = rawUrl;
   for (let redirectCount = 0; redirectCount <= 5; redirectCount++) {
     await validateImportUrl(currentUrl);
-    const headers = buildImportHeaders(new URL(currentUrl).origin === originalUrl.origin);
+    const headers = buildImportHeaders(
+      new URL(currentUrl).origin === originalUrl.origin,
+    );
     const response = await fetch(currentUrl, {
       method: "GET",
       headers,
@@ -159,7 +169,9 @@ async function fetchImportUrl(rawUrl: string): Promise<Response> {
   throw new Error("importUrl exceeded redirect limit");
 }
 
-function buildImportHeaders(includeAuthorization: boolean): Record<string, string> {
+function buildImportHeaders(
+  includeAuthorization: boolean,
+): Record<string, string> {
   const headers: Record<string, string> = { Accept: "application/json" };
   const token = process.env.MCP2CLI_IMPORT_TOKEN;
   if (token && includeAuthorization) {
@@ -189,13 +201,16 @@ async function validateImportUrl(rawUrl: string): Promise<void> {
     throw new Error(`importUrl host is not allowed: ${url.hostname}`);
   }
 
-  if (process.env.MCP2CLI_IMPORT_ALLOW_PRIVATE !== "1" && isPrivateImportHost(url.hostname)) {
+  if (
+    process.env.MCP2CLI_IMPORT_ALLOW_PRIVATE !== "1" &&
+    isPrivateImportHost(url.hostname)
+  ) {
     throw new Error(`importUrl host is private or local: ${url.hostname}`);
   }
   if (
-    process.env.MCP2CLI_IMPORT_ALLOW_PRIVATE !== "1"
-    && process.env.MCP2CLI_IMPORT_ALLOW_DNS !== "1"
-    && !isIP(normalizeImportHostname(url.hostname))
+    process.env.MCP2CLI_IMPORT_ALLOW_PRIVATE !== "1" &&
+    process.env.MCP2CLI_IMPORT_ALLOW_DNS !== "1" &&
+    !isIP(normalizeImportHostname(url.hostname))
   ) {
     throw new Error("DNS importUrl hosts require MCP2CLI_IMPORT_ALLOW_DNS=1");
   }
@@ -203,7 +218,12 @@ async function validateImportUrl(rawUrl: string): Promise<void> {
 }
 
 function parseCsvEnv(raw: string | undefined): Set<string> {
-  return new Set((raw ?? "").split(",").map((part) => part.trim()).filter(Boolean));
+  return new Set(
+    (raw ?? "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean),
+  );
 }
 
 function isPrivateImportHost(hostname: string): boolean {
@@ -238,7 +258,12 @@ function isPrivateImportHost(hostname: string): boolean {
   }
   if (family === 6) {
     if (lower === "::1") return true;
-    if (lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd")) return true;
+    if (
+      lower.startsWith("fe80:") ||
+      lower.startsWith("fc") ||
+      lower.startsWith("fd")
+    )
+      return true;
     if (lower.startsWith("ff")) return true;
   }
   return false;
@@ -258,22 +283,33 @@ async function validateResolvedImportHost(hostname: string): Promise<void> {
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   for (const address of addresses) {
     if (isPrivateImportHost(address.address)) {
-      throw new Error(`importUrl host resolves to private or local address: ${hostname}`);
+      throw new Error(
+        `importUrl host resolves to private or local address: ${hostname}`,
+      );
     }
   }
 }
 
 async function readImportState(
   localPath: string,
-): Promise<{ url: string; importedAt: number; importedConfig: ServicesConfig } | null> {
+): Promise<{
+  url: string;
+  importedAt: number;
+  importedConfig: ServicesConfig;
+} | null> {
   try {
     const raw = await Bun.file(importStatePath(localPath)).json();
     if (!raw || typeof raw !== "object") return null;
     const obj = raw as Record<string, unknown>;
-    if (typeof obj.url !== "string" || typeof obj.importedAt !== "number") return null;
+    if (typeof obj.url !== "string" || typeof obj.importedAt !== "number")
+      return null;
     const imported = ServicesConfigSchema.safeParse(obj.importedConfig);
     if (!imported.success) return null;
-    return { url: obj.url, importedAt: obj.importedAt, importedConfig: imported.data };
+    return {
+      url: obj.url,
+      importedAt: obj.importedAt,
+      importedConfig: imported.data,
+    };
   } catch {
     return null;
   }
@@ -287,7 +323,8 @@ async function writeImportState(
   try {
     await Bun.write(
       importStatePath(localPath),
-      JSON.stringify({ url, importedAt: Date.now(), importedConfig }, null, 2) + "\n",
+      JSON.stringify({ url, importedAt: Date.now(), importedConfig }, null, 2) +
+        "\n",
     );
   } catch (err) {
     log.warn("config_import_state_write_failed", {
@@ -317,9 +354,13 @@ export function mergeImportedConfig(
   localConfig: ServicesConfig,
   importedConfig: ServicesConfig,
 ): ServicesConfig {
-  const services: ServicesConfig["services"] = structuredClone(localConfig.services);
+  const services: ServicesConfig["services"] = structuredClone(
+    localConfig.services,
+  );
 
-  for (const [name, importedService] of Object.entries(importedConfig.services)) {
+  for (const [name, importedService] of Object.entries(
+    importedConfig.services,
+  )) {
     if (services[name]) continue;
     services[name] = structuredClone(importedService);
     services[name].source = importedService.source ?? "remote";

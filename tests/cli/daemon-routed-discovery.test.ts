@@ -12,20 +12,22 @@ const listToolsViaDaemon = mock(async () => ({
   ],
 }));
 
-const getSchemaViaDaemon = mock(async ({ tool }: { service: string; tool: string }) => ({
-  success: true,
-  result: {
-    tool,
-    description: `${tool} full description`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string" },
+const getSchemaViaDaemon = mock(
+  async ({ tool }: { service: string; tool: string }) => ({
+    success: true,
+    result: {
+      tool,
+      description: `${tool} full description`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
       },
+      usage: `mcp2cli open-brain ${tool}`,
     },
-    usage: `mcp2cli open-brain ${tool}`,
-  },
-}));
+  }),
+);
 
 mock.module("../../src/cli/commands/daemon-schema-client.ts", () => ({
   listToolsViaDaemon,
@@ -64,15 +66,18 @@ describe("daemon-routed schema discovery commands", () => {
     testDir = await mkdtemp(join(tmpdir(), "mcp2cli-daemon-discovery-test-"));
     await mkdir(join(testDir, "skills"), { recursive: true });
     const configPath = join(testDir, "services.json");
-    await Bun.write(configPath, JSON.stringify({
-      services: {
-        "open-brain": {
-          backend: "http",
-          url: "http://10.71.1.21:3100/mcp",
-          description: "Open Brain",
+    await Bun.write(
+      configPath,
+      JSON.stringify({
+        services: {
+          "open-brain": {
+            backend: "http",
+            url: "http://10.71.1.21:3100/mcp",
+            description: "Open Brain",
+          },
         },
-      },
-    }));
+      }),
+    );
 
     originalConfig = process.env.MCP2CLI_CONFIG;
     originalCacheDir = process.env.MCP2CLI_CACHE_DIR;
@@ -96,11 +101,18 @@ describe("daemon-routed schema discovery commands", () => {
 
   test("cache warm uses daemon-routed discovery and writes cache", async () => {
     const { handleCache } = await import("../../src/cli/commands/cache.ts");
-    const output = await captureOutput(() => handleCache(["warm", "open-brain"]));
+    const output = await captureOutput(() =>
+      handleCache(["warm", "open-brain"]),
+    );
 
-    expect(output.stderr).not.toContain("direct HTTP transport should not be used");
+    expect(output.stderr).not.toContain(
+      "direct HTTP transport should not be used",
+    );
     expect(output.stdout).toContain("open-brain: 2 tools cached");
-    expect(listToolsViaDaemon).toHaveBeenCalledWith({ service: "open-brain", fresh: true });
+    expect(listToolsViaDaemon).toHaveBeenCalledWith({
+      service: "open-brain",
+      fresh: true,
+    });
     expect(getSchemaViaDaemon).toHaveBeenCalledTimes(2);
     expect(getSchemaViaDaemon).toHaveBeenCalledWith({
       service: "open-brain",
@@ -117,18 +129,25 @@ describe("daemon-routed schema discovery commands", () => {
 
   test("cache diff refreshes live schemas through daemon-routed discovery", async () => {
     const { writeCache } = await import("../../src/cache/index.ts");
-    await writeCache("open-brain", [{
-      name: "search_all",
-      description: "old",
-      inputSchema: { type: "object" },
-      hash: "old-hash",
-    }]);
+    await writeCache("open-brain", [
+      {
+        name: "search_all",
+        description: "old",
+        inputSchema: { type: "object" },
+        hash: "old-hash",
+      },
+    ]);
 
     const { handleCache } = await import("../../src/cli/commands/cache.ts");
-    const output = await captureOutput(() => handleCache(["diff", "open-brain"]));
+    const output = await captureOutput(() =>
+      handleCache(["diff", "open-brain"]),
+    );
 
     expect(output.stdout).toContain('Schema drift detected for "open-brain"');
-    expect(listToolsViaDaemon).toHaveBeenCalledWith({ service: "open-brain", fresh: true });
+    expect(listToolsViaDaemon).toHaveBeenCalledWith({
+      service: "open-brain",
+      fresh: true,
+    });
     expect(getSchemaViaDaemon).toHaveBeenCalledTimes(2);
     expect(getSchemaViaDaemon).toHaveBeenCalledWith({
       service: "open-brain",
@@ -138,10 +157,15 @@ describe("daemon-routed schema discovery commands", () => {
   });
 
   test("generate-skills dry run uses daemon-routed discovery", async () => {
-    const { handleGenerateSkills } = await import("../../src/cli/commands/generate-skills.ts");
-    const output = await captureOutput(() => handleGenerateSkills(["open-brain", "--dry-run"]));
+    const { handleGenerateSkills } =
+      await import("../../src/cli/commands/generate-skills.ts");
+    const output = await captureOutput(() =>
+      handleGenerateSkills(["open-brain", "--dry-run"]),
+    );
 
-    expect(output.stderr).not.toContain("direct HTTP transport should not be used");
+    expect(output.stderr).not.toContain(
+      "direct HTTP transport should not be used",
+    );
     expect(listToolsViaDaemon).toHaveBeenCalledWith({ service: "open-brain" });
     expect(getSchemaViaDaemon).toHaveBeenCalledTimes(2);
     expect(getSchemaViaDaemon).toHaveBeenCalledWith({
@@ -163,13 +187,16 @@ function restoreEnv(name: string, value: string | undefined): void {
   }
 }
 
-async function captureOutput(fn: () => Promise<void>): Promise<{ stdout: string; stderr: string }> {
+async function captureOutput(
+  fn: () => Promise<void>,
+): Promise<{ stdout: string; stderr: string }> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const originalLog = console.log;
   const originalError = console.error;
   console.log = (...args: unknown[]) => stdout.push(args.map(String).join(" "));
-  console.error = (...args: unknown[]) => stderr.push(args.map(String).join(" "));
+  console.error = (...args: unknown[]) =>
+    stderr.push(args.map(String).join(" "));
   try {
     await fn();
   } finally {

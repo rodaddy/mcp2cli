@@ -64,42 +64,83 @@ export function printHelp(args?: string[]): void {
           },
           {
             name: "search",
-            description: "Search tool names and descriptions across cached services (alias: grep)",
+            description:
+              "Search tool names and descriptions across cached services (alias: grep)",
             usage: 'mcp2cli search "pattern" [--json]',
           },
           {
             name: "audit",
-            description: "View and manage tool call audit logs (tail, search, stats, clear)",
+            description:
+              "View and manage tool call audit logs (tail, search, stats, clear)",
             usage: "mcp2cli audit <tail [n]|search <pattern>|stats|clear|path>",
           },
           {
             name: "skills",
-            description: "Manage service skill bundles (list, get, install, diff, generate)",
+            description:
+              "Manage service skill bundles (list, get, install, diff, generate)",
             usage: "mcp2cli skills <list|get|install|diff|generate>",
           },
           {
             name: "batch",
             description: "Execute multiple tool calls from NDJSON stdin",
-            usage: "echo '{\"service\":\"n8n\",\"tool\":\"n8n_list_workflows\",\"params\":{}}' | mcp2cli batch [--parallel]",
+            usage:
+              'echo \'{"service":"n8n","tool":"n8n_list_workflows","params":{}}\' | mcp2cli batch [--parallel]',
           },
           {
             name: "credentials",
-            description: "Manage per-identity credential mappings for backend services",
-            usage: "mcp2cli credentials <list|set|set-default|remove|remove-default|resolve|group|reload|bootstrap-open-brain>",
+            description:
+              "Manage per-identity credential mappings for backend services",
+            usage:
+              "mcp2cli credentials <list|set|set-default|remove|remove-default|resolve|group|reload|bootstrap-open-brain>",
             subcommands: [
-              { name: "list [identity]", description: "List all credentials or filter by identity" },
-              { name: "set <identity> <service> --header 'K: V' [--env 'K=V']", description: "Set credentials for an identity on a service" },
-              { name: "set-default <service> --header 'K: V' [--env 'K=V']", description: "Set default credentials for a service" },
-              { name: "remove <identity> <service>", description: "Remove credentials for an identity on a service" },
-              { name: "remove-default <service>", description: "Remove default credentials for a service" },
-              { name: "resolve <userId> <service>", description: "Show effective credential for a user on a service" },
+              {
+                name: "list [identity]",
+                description: "List all credentials or filter by identity",
+              },
+              {
+                name: "set <identity> <service> --header 'K: V' [--env 'K=V']",
+                description: "Set credentials for an identity on a service",
+              },
+              {
+                name: "set-default <service> --header 'K: V' [--env 'K=V']",
+                description: "Set default credentials for a service",
+              },
+              {
+                name: "remove <identity> <service>",
+                description: "Remove credentials for an identity on a service",
+              },
+              {
+                name: "remove-default <service>",
+                description: "Remove default credentials for a service",
+              },
+              {
+                name: "resolve <userId> <service>",
+                description:
+                  "Show effective credential for a user on a service",
+              },
               { name: "group list", description: "List all credential groups" },
-              { name: "group add <name> <members...>", description: "Create a credential group" },
-              { name: "group add-members <name> <members...>", description: "Add members to an existing group" },
-              { name: "group remove <name>", description: "Remove a credential group" },
-              { name: "group remove-members <name> <members...>", description: "Remove members from a group" },
+              {
+                name: "group add <name> <members...>",
+                description: "Create a credential group",
+              },
+              {
+                name: "group add-members <name> <members...>",
+                description: "Add members to an existing group",
+              },
+              {
+                name: "group remove <name>",
+                description: "Remove a credential group",
+              },
+              {
+                name: "group remove-members <name> <members...>",
+                description: "Remove members from a group",
+              },
               { name: "reload", description: "Reload credentials from disk" },
-              { name: "bootstrap-open-brain [--item name] [--force]", description: "Populate Open Brain per-identity credentials from a Vaultwarden item" },
+              {
+                name: "bootstrap-open-brain [--item name] [--force]",
+                description:
+                  "Populate Open Brain per-identity credentials from a Vaultwarden item",
+              },
             ],
           },
         ],
@@ -128,7 +169,7 @@ export function printHelp(args?: string[]): void {
       "    bootstrap         Auto-configure from claude.json MCP config",
       "    generate-skills   Generate skill files from service schemas",
       "    cache             Manage schema cache (clear, status)",
-      '    search           Search tool names/descriptions across cached services',
+      "    search           Search tool names/descriptions across cached services",
       "    audit            View and manage tool call audit logs",
       "    skills           Manage service skill bundles (list, get, install)",
       "    batch            Execute multiple tool calls from NDJSON stdin",

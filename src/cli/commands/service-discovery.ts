@@ -6,7 +6,10 @@ import { hashToolSchema } from "../../cache/index.ts";
 import type { CachedToolSchema } from "../../cache/index.ts";
 import { listAllTools } from "../../schema/introspect.ts";
 import type { SchemaOutput, ToolSummary } from "../../schema/types.ts";
-import { listToolsViaDaemon, getSchemaViaDaemon } from "./daemon-schema-client.ts";
+import {
+  listToolsViaDaemon,
+  getSchemaViaDaemon,
+} from "./daemon-schema-client.ts";
 import { resolveDirectServiceConfig } from "./direct-service.ts";
 
 export interface ServiceDiscoveryResult {
@@ -31,7 +34,10 @@ async function discoverServiceSchemasViaDaemon(
   serviceName: string,
   options: { fresh?: boolean },
 ): Promise<ServiceDiscoveryResult> {
-  const listResult = await listToolsViaDaemon({ service: serviceName, fresh: options.fresh });
+  const listResult = await listToolsViaDaemon({
+    service: serviceName,
+    fresh: options.fresh,
+  });
   if (!listResult.success) {
     throw new Error(listResult.error.message);
   }
@@ -63,11 +69,12 @@ async function discoverServiceSchemasDirect(
   service: ServiceConfig,
 ): Promise<ServiceDiscoveryResult> {
   const directService = await resolveDirectServiceConfig(serviceName, service);
-  const connection = directService.backend === "http"
-    ? await connectToHttpService(directService)
-    : directService.backend === "websocket"
-      ? await connectToWebSocketService(directService)
-      : await connectToService(directService);
+  const connection =
+    directService.backend === "http"
+      ? await connectToHttpService(directService)
+      : directService.backend === "websocket"
+        ? await connectToWebSocketService(directService)
+        : await connectToService(directService);
 
   try {
     const rawTools = await listAllTools(connection.client);
@@ -91,7 +98,9 @@ async function discoverServiceSchemasDirect(
   }
 }
 
-async function schemaToCachedTool(schema: SchemaOutput): Promise<CachedToolSchema> {
+async function schemaToCachedTool(
+  schema: SchemaOutput,
+): Promise<CachedToolSchema> {
   return {
     name: schema.tool,
     description: schema.description,

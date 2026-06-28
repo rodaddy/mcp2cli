@@ -25,7 +25,10 @@ function readPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-const STARTUP_TIMEOUT_MS = readPositiveIntEnv("MCP2CLI_STARTUP_TIMEOUT", 10_000);
+const STARTUP_TIMEOUT_MS = readPositiveIntEnv(
+  "MCP2CLI_STARTUP_TIMEOUT",
+  10_000,
+);
 const STARTUP_POLL_MS = 50;
 const REQUEST_TIMEOUT_MS = 60_000;
 const REMOTE_CONNECT_TIMEOUT_MS = 10_000;
@@ -57,14 +60,19 @@ async function getLocalToken(): Promise<string | undefined> {
   }
 
   // Read tokens.json
-  const tokensPath = process.env.MCP2CLI_TOKENS_FILE
-    ?? join(process.env.HOME ?? "", ".config", "mcp2cli", "tokens.json");
+  const tokensPath =
+    process.env.MCP2CLI_TOKENS_FILE ??
+    join(process.env.HOME ?? "", ".config", "mcp2cli", "tokens.json");
   try {
     const file = Bun.file(tokensPath);
     if (await file.exists()) {
-      const raw = await file.json() as { tokens?: Array<{ token: string; role: string; expiresAt?: string }> };
+      const raw = (await file.json()) as {
+        tokens?: Array<{ token: string; role: string; expiresAt?: string }>;
+      };
       // Use the first non-expired admin token for local socket auth.
-      const adminEntry = raw.tokens?.find((t) => t.role === "admin" && !isExpiredToken(t.expiresAt));
+      const adminEntry = raw.tokens?.find(
+        (t) => t.role === "admin" && !isExpiredToken(t.expiresAt),
+      );
       cachedLocalToken = adminEntry?.token;
       cachedLocalTokenExpiresAt = adminEntry?.expiresAt;
     }
@@ -91,7 +99,10 @@ async function buildLocalHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
-async function refreshLocalToken(paths: DaemonPaths, token: string): Promise<boolean> {
+async function refreshLocalToken(
+  paths: DaemonPaths,
+  token: string,
+): Promise<boolean> {
   const response = await fetch("http://localhost/api/auth/refresh", {
     unix: paths.socketPath,
     method: "POST",
@@ -104,29 +115,41 @@ async function refreshLocalToken(paths: DaemonPaths, token: string): Promise<boo
   if (!response?.ok) {
     return reloadLocalTokenIfChanged(token);
   }
-  const body = await response.json().catch(() => null) as { token?: unknown; expiresAt?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as {
+    token?: unknown;
+    expiresAt?: unknown;
+  } | null;
   if (typeof body?.token !== "string") return reloadLocalTokenIfChanged(token);
   cachedLocalToken = body.token;
-  cachedLocalTokenExpiresAt = typeof body.expiresAt === "string" ? body.expiresAt : undefined;
+  cachedLocalTokenExpiresAt =
+    typeof body.expiresAt === "string" ? body.expiresAt : undefined;
   localTokenResolved = true;
   return true;
 }
 
-async function reloadLocalTokenIfChanged(previousToken: string): Promise<boolean> {
+async function reloadLocalTokenIfChanged(
+  previousToken: string,
+): Promise<boolean> {
   clearLocalTokenCache();
   const latestToken = await getLocalToken();
   return latestToken !== undefined && latestToken !== previousToken;
 }
 
-async function refreshLocalTokenIfNearExpiry(paths: DaemonPaths): Promise<void> {
+async function refreshLocalTokenIfNearExpiry(
+  paths: DaemonPaths,
+): Promise<void> {
   const token = await getLocalToken();
   if (!token || !cachedLocalTokenExpiresAt) return;
   const expiresAtMs = Date.parse(cachedLocalTokenExpiresAt);
   if (Number.isNaN(expiresAtMs)) return;
-  const refreshWindowMs = parseInt(process.env.MCP2CLI_TOKEN_REFRESH_WINDOW_MS ?? String(24 * 60 * 60 * 1000), 10);
-  const windowMs = Number.isFinite(refreshWindowMs) && refreshWindowMs > 0
-    ? refreshWindowMs
-    : 24 * 60 * 60 * 1000;
+  const refreshWindowMs = parseInt(
+    process.env.MCP2CLI_TOKEN_REFRESH_WINDOW_MS ?? String(24 * 60 * 60 * 1000),
+    10,
+  );
+  const windowMs =
+    Number.isFinite(refreshWindowMs) && refreshWindowMs > 0
+      ? refreshWindowMs
+      : 24 * 60 * 60 * 1000;
   if (expiresAtMs - Date.now() <= windowMs) {
     await refreshLocalToken(paths, token);
   }
@@ -142,9 +165,7 @@ export function clearLocalTokenCache(): void {
  * Start the daemon as a background process.
  * Detects dev vs compiled mode for correct spawn args.
  */
-export async function startDaemonProcess(
-  paths: DaemonPaths,
-): Promise<void> {
+export async function startDaemonProcess(paths: DaemonPaths): Promise<void> {
   // Ensure runtime directory exists
   await mkdir(dirname(paths.pidFile), { recursive: true });
 
@@ -208,7 +229,10 @@ export async function waitForDaemonReady(
 async function acquireStartLock(paths: DaemonPaths): Promise<boolean> {
   const lockPath = paths.pidFile + ".lock";
   try {
-    const fd = await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+    const fd = await open(
+      lockPath,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+    );
     await fd.close();
     return true;
   } catch {
@@ -290,7 +314,9 @@ async function getLocalConfig(): Promise<ServicesConfig | null> {
  * - "remote-local" when MCP2CLI_REMOTE_URL is set
  * - "local" when no remote URL
  */
-export async function resolveSource(serviceName: string | undefined): Promise<ServiceSource> {
+export async function resolveSource(
+  serviceName: string | undefined,
+): Promise<ServiceSource> {
   if (!serviceName) return undefined;
   const config = await getLocalConfig();
   const svc = config?.services[serviceName];
@@ -345,7 +371,10 @@ async function fetchLocal(
 }
 
 const REMOTE_RETRIES = parseInt(process.env.MCP2CLI_REMOTE_RETRIES ?? "3", 10);
-const REMOTE_BACKOFF_BASE_MS = parseInt(process.env.MCP2CLI_REMOTE_BACKOFF_MS ?? "500", 10);
+const REMOTE_BACKOFF_BASE_MS = parseInt(
+  process.env.MCP2CLI_REMOTE_BACKOFF_MS ?? "500",
+  10,
+);
 
 async function fetchRemote(
   path: string,
@@ -385,7 +414,10 @@ async function fetchRemote(
       return result;
     } catch (err) {
       // Auth errors are permanent -- bail immediately, don't retry
-      if (err instanceof Error && err.message.startsWith("Remote auth failed")) {
+      if (
+        err instanceof Error &&
+        err.message.startsWith("Remote auth failed")
+      ) {
         throw err;
       }
       lastError = err;
@@ -410,9 +442,10 @@ async function fetchDaemon(
   path: string,
   body?: unknown,
 ): Promise<DaemonResponse> {
-  const serviceName = body && typeof body === "object" && "service" in body
-    ? (body as { service: string }).service
-    : undefined;
+  const serviceName =
+    body && typeof body === "object" && "service" in body
+      ? (body as { service: string }).service
+      : undefined;
 
   const remote = getRemoteConfig();
   const explicitSource = await resolveSource(serviceName);
@@ -434,14 +467,19 @@ async function fetchDaemon(
       if (isRemoteAuthError(err)) {
         throw err;
       }
-      if (serviceName && await isIdentitySensitiveService(serviceName)) {
+      if (serviceName && (await isIdentitySensitiveService(serviceName))) {
         throw err;
       }
       return await fetchLocal(path, body);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const target = source === "local" ? "local daemon" : remote ? `remote daemon at ${remote.url}` : "daemon";
+    const target =
+      source === "local"
+        ? "local daemon"
+        : remote
+          ? `remote daemon at ${remote.url}`
+          : "daemon";
     return {
       success: false,
       error: {
@@ -456,7 +494,9 @@ function isRemoteAuthError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith("Remote auth failed");
 }
 
-async function isIdentitySensitiveService(serviceName: string): Promise<boolean> {
+async function isIdentitySensitiveService(
+  serviceName: string,
+): Promise<boolean> {
   try {
     const config = await getLocalConfig();
     if (!config) {

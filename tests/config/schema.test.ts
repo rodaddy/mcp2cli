@@ -221,7 +221,9 @@ describe("ServicesConfigSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.importUrl).toBe("http://localhost:9500/api/services/export");
+      expect(result.data.importUrl).toBe(
+        "http://localhost:9500/api/services/export",
+      );
       expect(result.data.importTtlSeconds).toBe(0);
     }
   });

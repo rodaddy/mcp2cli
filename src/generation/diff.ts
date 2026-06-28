@@ -4,6 +4,7 @@
  * to produce a human-readable diff showing added, removed, and modified tools.
  */
 import type { ToolSummary } from "../schema/types.ts";
+import { MARKER_START, MARKER_END } from "./templates.ts";
 
 /** Classification of a single tool change */
 export interface ToolChange {
@@ -27,54 +28,96 @@ export interface SkillDiffResult {
 }
 
 /**
- * Parse tool names and descriptions from an existing SKILL.md file.
- * Extracts from the quick reference table (| Tool | Description |).
+ * Parse tool names from an existing SKILL.md front skill.
+ *
+ * The slim front skill lists tools two ways, both supported here:
+ *  - a "Tool Groups" table whose middle column is a comma-separated tool list
+ *    (`| Group | Tools | Reference |`), or
+ *  - a flat fallback bullet list (`- tool_name`) when no grouping was available.
+ *
+ * Descriptions live in `references/*.md`, not the front skill, so they are not
+ * recovered here -- name-level add/remove diffing plus the frontmatter
+ * `schema_hash` are the drift signals for the front skill.
+ *
+ * The legacy `| Tool | Description |` quick-reference table is still parsed so
+ * diffs against pre-existing generated skills keep working during migration.
  */
 export function parseExistingTools(skillContent: string): ToolSummary[] {
   const tools: ToolSummary[] = [];
-  const lines = skillContent.split("\n");
 
-  let inTable = false;
+  // Only parse the auto-generated block. Outside it live YAML frontmatter
+  // (whose `triggers:` bullets look like flat tool entries) and the manual
+  // Notes section -- scanning those produced phantom tools and made every
+  // `--diff` report spurious removals. If the markers are absent (e.g. a
+  // pre-marker hand-authored file), fall back to scanning the whole content.
+  const startIdx = skillContent.indexOf(MARKER_START);
+  const endIdx = skillContent.indexOf(MARKER_END);
+  const scoped =
+    startIdx !== -1 && endIdx !== -1 && endIdx > startIdx
+      ? skillContent.slice(startIdx + MARKER_START.length, endIdx)
+      : skillContent;
+  const lines = scoped.split("\n");
+
+  // Mode: parsing rows of a markdown table we recognized via its header.
+  type TableKind = "legacy" | "groups" | null;
+  let tableKind: TableKind = null;
   let headerSeen = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Detect table start by header row (exact match on "| Tool |" pattern)
+    // Legacy quick-reference table header: | Tool | Description |
     if (
       (trimmed.startsWith("| Tool |") || trimmed.startsWith("| tool |")) &&
       trimmed.includes("Description")
     ) {
-      inTable = true;
+      tableKind = "legacy";
+      headerSeen = false;
+      continue;
+    }
+
+    // New group-index table header: | Group | Tools | Reference |
+    if (trimmed.startsWith("| Group |") && trimmed.includes("Tools")) {
+      tableKind = "groups";
       headerSeen = false;
       continue;
     }
 
     // Skip separator row (|------|...)
-    if (inTable && !headerSeen && trimmed.startsWith("|---")) {
+    if (tableKind && !headerSeen && trimmed.startsWith("|---")) {
       headerSeen = true;
       continue;
     }
 
     // Parse data rows
-    if (inTable && headerSeen && trimmed.startsWith("|")) {
+    if (tableKind && headerSeen && trimmed.startsWith("|")) {
       const cells = trimmed
         .split("|")
         .map((c) => c.trim())
         .filter((c) => c.length > 0);
 
-      if (cells.length >= 2) {
-        tools.push({
-          name: cells[0]!,
-          description: cells[1]!,
-        });
+      if (tableKind === "legacy" && cells.length >= 2) {
+        tools.push({ name: cells[0]!, description: cells[1]! });
+      } else if (tableKind === "groups" && cells.length >= 2) {
+        // Middle column is a comma-separated list of tool names.
+        for (const name of cells[1]!.split(",").map((n) => n.trim())) {
+          if (name.length > 0) tools.push({ name, description: "" });
+        }
       }
       continue;
     }
 
     // End of table
-    if (inTable && headerSeen && !trimmed.startsWith("|")) {
-      inTable = false;
+    if (tableKind && headerSeen && !trimmed.startsWith("|")) {
+      tableKind = null;
+    }
+
+    // Flat fallback list: "- tool_name" (no table, no spaces in the name).
+    if (!tableKind && trimmed.startsWith("- ")) {
+      const name = trimmed.slice(2).trim();
+      if (name.length > 0 && !name.includes(" ")) {
+        tools.push({ name, description: "" });
+      }
     }
   }
 
@@ -109,7 +152,13 @@ export function computeSkillDiff(
     const existing = existingMap.get(name);
     if (!existing) {
       added.push({ tool: name, type: "added" });
-    } else if (existing.description !== newTool.description) {
+    } else if (
+      // The slim group-index front skill stores no per-tool descriptions, so a
+      // parsed empty description means "unknown", not "changed to empty". Only
+      // flag a real description change to avoid every tool showing as modified.
+      existing.description !== "" &&
+      existing.description !== newTool.description
+    ) {
       modified.push({
         tool: name,
         type: "modified",

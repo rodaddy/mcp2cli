@@ -65,14 +65,16 @@ export const handleSkills: CommandHandler = async (args: string[]) => {
           "    generate <service> [options]  Generate/regenerate skill files",
           "",
           "EXAMPLES:",
-          '    mcp2cli skills list',
-          '    mcp2cli skills get open-brain > SKILL.md',
-          '    mcp2cli skills install open-brain --target ~/.hermes/skills/mcp/open-brain',
-          '    mcp2cli skills diff n8n',
-          '    mcp2cli skills generate n8n --conflict=merge',
+          "    mcp2cli skills list",
+          "    mcp2cli skills get open-brain > SKILL.md",
+          "    mcp2cli skills install open-brain --target ~/.hermes/skills/mcp/open-brain",
+          "    mcp2cli skills diff n8n",
+          "    mcp2cli skills generate n8n --conflict=merge",
         ].join("\n"),
       );
-      process.exitCode = subcommand ? EXIT_CODES.VALIDATION : EXIT_CODES.SUCCESS;
+      process.exitCode = subcommand
+        ? EXIT_CODES.VALIDATION
+        : EXIT_CODES.SUCCESS;
       break;
   }
 };
@@ -103,7 +105,9 @@ async function handleSkillsList(args: string[]): Promise<void> {
     const exists = await file.exists();
 
     if (!exists) {
-      const cached = cachedServices.includes(name) ? await readCacheRaw(name) : null;
+      const cached = cachedServices.includes(name)
+        ? await readCacheRaw(name)
+        : null;
       const visibleCachedTools = cached
         ? filterTools(cached.tools, extractPolicy(config.services[name]!))
         : null;
@@ -121,7 +125,9 @@ async function handleSkillsList(args: string[]): Promise<void> {
     const hashMatch = content.match(/^schema_hash:\s*(\S+)/m);
     const existingHash = hashMatch?.[1];
 
-    const cached = cachedServices.includes(name) ? await readCacheRaw(name) : null;
+    const cached = cachedServices.includes(name)
+      ? await readCacheRaw(name)
+      : null;
     const visibleCachedTools = cached
       ? filterTools(cached.tools, extractPolicy(config.services[name]!))
       : null;
@@ -161,12 +167,16 @@ async function handleSkillsList(args: string[]): Promise<void> {
     for (const s of statuses) {
       const pad = " ".repeat(maxName - s.service.length + 2);
       const tools = s.toolCount !== undefined ? `${s.toolCount} tools` : "";
-      const staleNote = s.status === "stale" && s.cachedToolCount !== undefined
-        ? ` (cache has ${s.cachedToolCount})`
-        : "";
-      const statusTag = s.status === "generated" ? "ok"
-        : s.status === "stale" ? "stale"
-        : "missing";
+      const staleNote =
+        s.status === "stale" && s.cachedToolCount !== undefined
+          ? ` (cache has ${s.cachedToolCount})`
+          : "";
+      const statusTag =
+        s.status === "generated"
+          ? "ok"
+          : s.status === "stale"
+            ? "stale"
+            : "missing";
       console.log(`  ${s.service}${pad}${statusTag}  ${tools}${staleNote}`);
     }
   }
@@ -210,11 +220,15 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
   const targetIdx = args.indexOf("--target");
   const target = targetArg
     ? targetArg.split("=").slice(1).join("=")
-    : targetIdx >= 0 ? args[targetIdx + 1] : undefined;
+    : targetIdx >= 0
+      ? args[targetIdx + 1]
+      : undefined;
   const force = args.includes("--force");
 
   if (!serviceName || serviceName.startsWith("--") || !target) {
-    console.error("Usage: mcp2cli skills install <service> --target <path> [--force]");
+    console.error(
+      "Usage: mcp2cli skills install <service> --target <path> [--force]",
+    );
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
   }
@@ -250,7 +264,9 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
   }
   const home = process.env.HOME ?? homedir();
   if (absoluteTarget === home) {
-    console.error("Target path must not be the home directory root. Specify a subdirectory.");
+    console.error(
+      "Target path must not be the home directory root. Specify a subdirectory.",
+    );
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
   }
@@ -259,7 +275,9 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
   const existingSkill = Bun.file(join(resolvedTarget, "SKILL.md"));
   const existingTarget = await existingSkill.exists();
   if (existingTarget && !force) {
-    console.error(`Skill bundle already exists at ${resolvedTarget}. Use --force to overwrite.`);
+    console.error(
+      `Skill bundle already exists at ${resolvedTarget}. Use --force to overwrite.`,
+    );
     process.exitCode = EXIT_CODES.VALIDATION;
     return;
   }
@@ -270,7 +288,10 @@ async function handleSkillsInstall(args: string[]): Promise<void> {
   await mkdir(resolvedTarget, { recursive: true });
 
   // L16: Dereference symlinks when copying
-  await cp(resolved.skillDir, resolvedTarget, { recursive: true, dereference: true });
+  await cp(resolved.skillDir, resolvedTarget, {
+    recursive: true,
+    dereference: true,
+  });
 
   // L15: Simplified install message without inaccurate file count
   console.log(`Installed ${serviceName} skill bundle to ${resolvedTarget}`);

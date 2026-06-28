@@ -41,7 +41,10 @@ export function normalizeOpenBrainToken(value: unknown): string | null {
   if (colonIdx > 0) {
     const role = trimmed.slice(0, colonIdx);
     const token = trimmed.slice(colonIdx + 1);
-    if (["admin", "agent", "discord", "n8n", "readonly"].includes(role) && token) {
+    if (
+      ["admin", "agent", "discord", "n8n", "readonly"].includes(role) &&
+      token
+    ) {
       return token;
     }
   }

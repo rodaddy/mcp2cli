@@ -10,6 +10,8 @@ export interface SkillTemplateInput {
   description: string;
   tools: ToolSummary[];
   triggerKeywords: string[];
+  /** Tool groups used to build the slim front-skill reference index. */
+  groups?: ToolGroup[];
   generatedAt?: string;
   schemaHash?: string;
   toolCount?: number;
