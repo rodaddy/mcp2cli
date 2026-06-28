@@ -27,54 +27,84 @@ export interface SkillDiffResult {
 }
 
 /**
- * Parse tool names and descriptions from an existing SKILL.md file.
- * Extracts from the quick reference table (| Tool | Description |).
+ * Parse tool names from an existing SKILL.md front skill.
+ *
+ * The slim front skill lists tools two ways, both supported here:
+ *  - a "Tool Groups" table whose middle column is a comma-separated tool list
+ *    (`| Group | Tools | Reference |`), or
+ *  - a flat fallback bullet list (`- tool_name`) when no grouping was available.
+ *
+ * Descriptions live in `references/*.md`, not the front skill, so they are not
+ * recovered here -- name-level add/remove diffing plus the frontmatter
+ * `schema_hash` are the drift signals for the front skill.
+ *
+ * The legacy `| Tool | Description |` quick-reference table is still parsed so
+ * diffs against pre-existing generated skills keep working during migration.
  */
 export function parseExistingTools(skillContent: string): ToolSummary[] {
   const tools: ToolSummary[] = [];
   const lines = skillContent.split("\n");
 
-  let inTable = false;
+  // Mode: parsing rows of a markdown table we recognized via its header.
+  type TableKind = "legacy" | "groups" | null;
+  let tableKind: TableKind = null;
   let headerSeen = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Detect table start by header row (exact match on "| Tool |" pattern)
+    // Legacy quick-reference table header: | Tool | Description |
     if (
       (trimmed.startsWith("| Tool |") || trimmed.startsWith("| tool |")) &&
       trimmed.includes("Description")
     ) {
-      inTable = true;
+      tableKind = "legacy";
+      headerSeen = false;
+      continue;
+    }
+
+    // New group-index table header: | Group | Tools | Reference |
+    if (trimmed.startsWith("| Group |") && trimmed.includes("Tools")) {
+      tableKind = "groups";
       headerSeen = false;
       continue;
     }
 
     // Skip separator row (|------|...)
-    if (inTable && !headerSeen && trimmed.startsWith("|---")) {
+    if (tableKind && !headerSeen && trimmed.startsWith("|---")) {
       headerSeen = true;
       continue;
     }
 
     // Parse data rows
-    if (inTable && headerSeen && trimmed.startsWith("|")) {
+    if (tableKind && headerSeen && trimmed.startsWith("|")) {
       const cells = trimmed
         .split("|")
         .map((c) => c.trim())
         .filter((c) => c.length > 0);
 
-      if (cells.length >= 2) {
-        tools.push({
-          name: cells[0]!,
-          description: cells[1]!,
-        });
+      if (tableKind === "legacy" && cells.length >= 2) {
+        tools.push({ name: cells[0]!, description: cells[1]! });
+      } else if (tableKind === "groups" && cells.length >= 2) {
+        // Middle column is a comma-separated list of tool names.
+        for (const name of cells[1]!.split(",").map((n) => n.trim())) {
+          if (name.length > 0) tools.push({ name, description: "" });
+        }
       }
       continue;
     }
 
     // End of table
-    if (inTable && headerSeen && !trimmed.startsWith("|")) {
-      inTable = false;
+    if (tableKind && headerSeen && !trimmed.startsWith("|")) {
+      tableKind = null;
+    }
+
+    // Flat fallback list: "- tool_name" (no table, no spaces in the name).
+    if (!tableKind && trimmed.startsWith("- ")) {
+      const name = trimmed.slice(2).trim();
+      if (name.length > 0 && !name.includes(" ")) {
+        tools.push({ name, description: "" });
+      }
     }
   }
 

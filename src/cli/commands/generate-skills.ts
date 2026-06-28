@@ -262,6 +262,7 @@ export const handleGenerateSkills = async (args: string[]): Promise<void> => {
       description: `MCP tools for ${serviceName}`,
       tools,
       triggerKeywords,
+      groups,
       generatedAt,
       schemaHash,
       toolCount: tools.length,

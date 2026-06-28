@@ -100,14 +100,26 @@ describe("generateSkillMd", () => {
     expect(md).toContain("test");
   });
 
-  test("includes quick reference tool table", () => {
+  test("falls back to a flat tool name list when no groups supplied", () => {
     const md = generateSkillMd(mockInput);
-    expect(md).toContain("json_tool");
-    expect(md).toContain("error_tool");
-    expect(md).toContain("create_item");
-    // Table headers
-    expect(md).toContain("Tool");
-    expect(md).toContain("Description");
+    expect(md).toContain("## Tools");
+    expect(md).toContain("- json_tool");
+    expect(md).toContain("- error_tool");
+    expect(md).toContain("- create_item");
+    // No description column in the slim front skill.
+    expect(md).not.toContain("Description");
+  });
+
+  test("emits a group index linking to reference files when groups supplied", () => {
+    const md = generateSkillMd({ ...mockInput, groups: [mockGroup] });
+    expect(md).toContain("## Tool Groups");
+    expect(md).toContain("| Group | Tools | Reference |");
+    expect(md).toContain("Data Operations");
+    // Group row carries tool names and a link to its reference file.
+    expect(md).toContain("json_tool, create_item");
+    expect(md).toContain("[data-ops.md](references/data-ops.md)");
+    // Detail (descriptions) stays out of the front skill.
+    expect(md).not.toContain("Returns a JSON object");
   });
 
   test("includes generic invoke pattern", () => {

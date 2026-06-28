@@ -67,6 +67,46 @@ describe("parseExistingTools", () => {
     expect(tools[0]!.name).toBe("tool_a");
     expect(tools[1]!.name).toBe("tool_b");
   });
+
+  test("extracts tool names from the slim group-index table", () => {
+    const content = [
+      "## Tool Groups",
+      "",
+      "| Group | Tools | Reference |",
+      "|-------|-------|-----------|",
+      "| Item Operations | list_items, create_item | [item-ops.md](references/item-ops.md) |",
+      "| Tier Operations | set_tier, bulk_set_tier | [tier-ops.md](references/tier-ops.md) |",
+      "",
+      "## Usage",
+    ].join("\n");
+
+    const tools = parseExistingTools(content);
+    expect(tools.map((t) => t.name)).toEqual([
+      "list_items",
+      "create_item",
+      "set_tier",
+      "bulk_set_tier",
+    ]);
+  });
+
+  test("extracts tool names from the flat fallback list", () => {
+    const content = [
+      "## Tools",
+      "",
+      "- json_tool",
+      "- error_tool",
+      "- create_item",
+      "",
+      "## Usage",
+    ].join("\n");
+
+    const tools = parseExistingTools(content);
+    expect(tools.map((t) => t.name)).toEqual([
+      "json_tool",
+      "error_tool",
+      "create_item",
+    ]);
+  });
 });
 
 // -- computeSkillDiff --

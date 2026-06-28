@@ -96,11 +96,12 @@ describe("generate-skills integration", () => {
     expect(skillContent).toContain("description:");
     expect(skillContent).toContain("triggers:");
 
-    // Tool table with all 3 mock tools
+    // Slim group index lists all 3 mock tools and links to reference files
     expect(skillContent).toContain("json_tool");
     expect(skillContent).toContain("error_tool");
     expect(skillContent).toContain("create_item");
-    expect(skillContent).toContain("| Tool | Description |");
+    expect(skillContent).toContain("| Group | Tools | Reference |");
+    expect(skillContent).toContain("(references/");
 
     // Invoke pattern
     expect(skillContent).toContain("mcp2cli mock-server");

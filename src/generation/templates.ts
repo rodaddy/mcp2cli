@@ -20,8 +20,14 @@ const MANUAL_START = "<!-- MANUAL:START -->";
 const MANUAL_END = "<!-- MANUAL:END -->";
 
 /**
- * Generate a slim SKILL.md file with YAML frontmatter, tool table, and invoke pattern.
- * Stays under 300 tokens for typical services.
+ * Generate a slim SKILL.md front skill: YAML frontmatter, a routing index of
+ * tool *groups* (each linking to its reference file), and the invoke pattern.
+ *
+ * Progressive-disclosure shape (per PAI skill-creator standard): the front skill
+ * carries only routing -- the per-tool detail lives in `references/*.md`. The flat
+ * per-tool listing is intentionally NOT inlined here; it would blow the token
+ * budget for large services (a 46-tool service was ~1100 tokens with the old
+ * inline table). Falls back to a flat tool list only when no groups are supplied.
  */
 export function generateSkillMd(input: SkillTemplateInput): string {
   const lines: string[] = [];
@@ -56,15 +62,30 @@ export function generateSkillMd(input: SkillTemplateInput): string {
   lines.push(MARKER_START);
   lines.push("");
 
-  // Quick reference tool table
-  lines.push("## Quick Reference");
-  lines.push("");
-  lines.push("| Tool | Description |");
-  lines.push("|------|-------------|");
-  for (const tool of input.tools) {
-    lines.push(`| ${tool.name} | ${tool.description.replace(/\|/g, "\\|")} |`);
+  const groups = input.groups ?? [];
+
+  if (groups.length > 0) {
+    // Routing index: one row per group, linking to its reference file.
+    lines.push("## Tool Groups");
+    lines.push("");
+    lines.push("| Group | Tools | Reference |");
+    lines.push("|-------|-------|-----------|");
+    for (const group of groups) {
+      const names = group.tools.map((t) => t.tool).join(", ");
+      lines.push(
+        `| ${group.label} | ${names.replace(/\|/g, "\\|")} | [${group.filename}](references/${group.filename}) |`,
+      );
+    }
+    lines.push("");
+  } else {
+    // Fallback (no grouping available): flat tool name list, no descriptions.
+    lines.push("## Tools");
+    lines.push("");
+    for (const tool of input.tools) {
+      lines.push(`- ${tool.name}`);
+    }
+    lines.push("");
   }
-  lines.push("");
 
   // Invoke pattern
   lines.push("## Usage");
@@ -75,7 +96,9 @@ export function generateSkillMd(input: SkillTemplateInput): string {
   lines.push("");
 
   // References pointer
-  lines.push("See `references/` for detailed parameter docs per tool.");
+  lines.push(
+    "See `references/` for per-tool parameters, types, and examples.",
+  );
   lines.push("");
 
   lines.push(MARKER_END);
