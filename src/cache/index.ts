@@ -10,7 +10,7 @@ export type {
   DriftResult,
 } from "./types.ts";
 
-export { canonicalJson, hashToolSchema } from "./hash.ts";
+export { canonicalJson, hashToolSchema, fingerprintSchemas } from "./hash.ts";
 
 export {
   getCacheDir,
@@ -19,6 +19,8 @@ export {
   readCacheRaw,
   writeCache,
   clearCache,
+  clearServiceCacheKeys,
+  readCacheFingerprint,
   listCachedServices,
   isCacheExpired,
   resolveTtlMs,

@@ -5,7 +5,7 @@
  * ADV-06: Triggers auto-regeneration of skill files when drift is detected.
  */
 import type { McpConnection } from "../connection/types.ts";
-import { readCacheRaw, writeCache, detectDrift, resolveTtlMs, mapToolsToCachedSchemas } from "../cache/index.ts";
+import { readCacheRaw, writeCache, detectDrift, resolveTtlMs, mapToolsToCachedSchemas, clearServiceCacheKeys } from "../cache/index.ts";
 import type { AccessPolicy } from "../access/types.ts";
 import { listAllTools } from "../schema/introspect.ts";
 import { autoRegenerateSkills } from "../generation/auto-regen.ts";
@@ -53,6 +53,20 @@ export async function checkDriftOnConnect(
           driftDetected: true,
           changeCount: drift.changes.length,
         });
+
+        // #58: a contract change must invalidate EVERY cache key for this
+        // service -- the bare entry AND all per-credential keys -- not just the
+        // base entry rewritten below. Otherwise a user's credential-scoped read
+        // keeps serving the old schema after the bump. Clear them all here; the
+        // base entry is repopulated immediately below, and credential entries
+        // refill on their next read.
+        const clearedKeys = await clearServiceCacheKeys(serviceName);
+        if (clearedKeys > 0) {
+          log.info("drift_cache_invalidated", {
+            service: serviceName,
+            keysCleared: clearedKeys,
+          });
+        }
 
         // ADV-06: Auto-regenerate skill files on drift
         const toolSummaries = liveTools.map((t) => ({

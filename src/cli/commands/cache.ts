@@ -41,6 +41,11 @@ export const handleCache: CommandHandler = async (args: string[]) => {
           "    status             Show cache status for all services",
           "    diff <service>     Compare cached vs live schemas for a service",
           "    warm [service]     Fetch and cache schemas (all or specific service)",
+          "",
+          "OPTIONS:",
+          "    --force            (warm) clear the existing cache entry before refetching.",
+          "                       Use this after an upstream contract/schema bump -- the",
+          "                       cache otherwise serves the old schema until its TTL.",
         ].join("\n"),
       );
       process.exitCode = subcommand
@@ -132,7 +137,9 @@ async function handleCacheDiff(args: string[]): Promise<void> {
 }
 
 async function handleCacheWarm(args: string[]): Promise<void> {
-  const targetService = args[0];
+  const force = args.includes("--force");
+  const positional = args.filter((a) => !a.startsWith("--"));
+  const targetService = positional[0];
   const config = await loadConfig();
   const serviceNames = targetService
     ? [targetService]
@@ -153,6 +160,11 @@ async function handleCacheWarm(args: string[]): Promise<void> {
     const service = config.services[serviceName]!;
     console.log(`  warming ${serviceName}...`);
     try {
+      // --force: drop the stale entry first so a refetch failure can't leave the
+      // old schema in place. The recommended recovery after a contract bump.
+      if (force) {
+        await clearCache(serviceName);
+      }
       const result = await Promise.race([
         (async () => {
           const { cachedSchemas } = await discoverServiceSchemas(

@@ -11,6 +11,7 @@ import { getDaemonPaths, getRemoteConfig } from "../daemon/paths.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import { getDaemonStatus, cleanStaleDaemon } from "./liveness.ts";
 import { getRemoteServiceAvailability } from "./remote-discovery.ts";
+import { readCacheFingerprint, clearServiceCacheKeys } from "../cache/index.ts";
 import type { ServiceSource, ServicesConfig } from "../config/index.ts";
 import type { DaemonPaths } from "../daemon/types.ts";
 import type {
@@ -518,12 +519,38 @@ export async function callViaDaemon(
 }
 
 /**
+ * #58 client-side cache coherence: if the daemon stamped a schemaFingerprint
+ * that differs from the client's locally-cached fingerprint for this service,
+ * the client's cache is stale (the daemon already absorbed an upstream contract
+ * bump). Drop the client's local entries so the next read refetches. Best-effort
+ * and per-service -- a response only carries the fingerprint for its own service.
+ */
+export async function reconcileClientCache(
+  service: string,
+  response: DaemonResponse,
+): Promise<void> {
+  if (!response.success || !response.schemaFingerprint) return;
+  try {
+    const localFingerprint = await readCacheFingerprint(service);
+    // Only invalidate when we HAVE a local fingerprint that disagrees. A missing
+    // local fingerprint is a cold/absent cache -- nothing to invalidate.
+    if (localFingerprint && localFingerprint !== response.schemaFingerprint) {
+      await clearServiceCacheKeys(service);
+    }
+  } catch {
+    // Coherence is an optimization; never fail a read because of it.
+  }
+}
+
+/**
  * Send a list-tools request to the daemon.
  */
 export async function listToolsViaDaemon(
   request: DaemonListToolsRequest,
 ): Promise<DaemonResponse> {
-  return fetchDaemon("/list-tools", request);
+  const response = await fetchDaemon("/list-tools", request);
+  await reconcileClientCache(request.service, response);
+  return response;
 }
 
 /**
@@ -532,7 +559,9 @@ export async function listToolsViaDaemon(
 export async function getSchemaViaDaemon(
   request: DaemonSchemaRequest,
 ): Promise<DaemonResponse> {
-  return fetchDaemon("/schema", request);
+  const response = await fetchDaemon("/schema", request);
+  await reconcileClientCache(request.service, response);
+  return response;
 }
 
 /**

@@ -20,6 +20,35 @@ export function canonicalJson(value: unknown): string {
   });
 }
 
+/** SHA-256 hex digest of a string. */
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Aggregate fingerprint of a service's whole schema surface.
+ *
+ * Order-independent: hashes the sorted list of per-tool hashes, so the same set
+ * of tools always yields the same fingerprint regardless of listing order. A
+ * change to ANY tool's surface (including a new inputSchema field like
+ * `create_if_missing`) changes the fingerprint. This is the fallback signal for
+ * servers that do not publish an authoritative contract hash; for servers that
+ * do (e.g. Open Brain's `get_contract.schema_hash`), prefer that value.
+ */
+export async function fingerprintSchemas(
+  tools: { hash: string }[],
+): Promise<string> {
+  const joined = tools
+    .map((t) => t.hash)
+    .sort()
+    .join("|");
+  return sha256Hex(joined);
+}
+
 /**
  * Compute SHA-256 hash of a tool's schema surface.
  * The "surface" is: name + description + inputSchema + annotations.
