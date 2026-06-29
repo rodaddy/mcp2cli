@@ -79,6 +79,7 @@ jobs:
       LOG_FILE: /home/rico/.local/state/mcp2cli/log/mcp2cli.log
       STAGED_BINARY: /home/rico/.local/share/mcp2cli/mcp2cli-new
       BACKUP_PATH: /home/rico/.local/share/mcp2cli/backups/mcp2cli.bak
+      RESTART_HELPER: /home/rico/.local/share/mcp2cli/restart-hosted-daemon.sh
       VAULTWARDEN_REMOTE_URL: http://127.0.0.1:9500
       HEALTH_URL: http://10.71.20.63:9500/health
 
@@ -104,7 +105,20 @@ jobs:
                cp ${{ env.BINARY_PATH }} ${{ env.BACKUP_PATH }}; \
              fi"
 
+      - name: Deploy restart helper
+        run: |
+          scp scripts/deploy/restart-hosted-daemon.sh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:${{ env.RESTART_HELPER }}
+          ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+            "chmod 755 ${{ env.RESTART_HELPER }} && \
+             sh -n ${{ env.RESTART_HELPER }} && \
+             BINARY_PATH=${{ env.BINARY_PATH }} \
+             ENV_FILE=${{ env.ENV_FILE }} \
+             PID_FILE=${{ env.PID_FILE }} \
+             LOG_FILE=${{ env.LOG_FILE }} \
+             ${{ env.RESTART_HELPER }} --check"
+
       - name: Deploy new binary
+        id: deploy_binary
         run: |
           scp dist/mcp2cli ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:${{ env.STAGED_BINARY }}
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
@@ -114,27 +128,12 @@ jobs:
       - name: Restart hosted daemon
         run: |
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            'set -eu
-             if [ -f "${{ env.PID_FILE }}" ]; then
-               old_pid=$(cat "${{ env.PID_FILE }}")
-               if kill -0 "$old_pid" 2>/dev/null; then
-                 kill "$old_pid" 2>/dev/null || true
-                 for _ in 1 2 3 4 5; do
-                   kill -0 "$old_pid" 2>/dev/null || break
-                   sleep 1
-                 done
-                 kill -0 "$old_pid" 2>/dev/null && kill -KILL "$old_pid" 2>/dev/null || true
-               fi
-             fi
-             pgrep -u "${{ env.DEPLOY_USER }}" -f "^${{ env.BINARY_PATH }}$" | while read -r pid; do
-               kill "$pid" 2>/dev/null || true
-             done
-             set -a
-             . "${{ env.ENV_FILE }}"
-             MCP2CLI_VAULTWARDEN_REMOTE_URL="${{ env.VAULTWARDEN_REMOTE_URL }}"
-             set +a
-             nohup "${{ env.BINARY_PATH }}" < /dev/null > "${{ env.LOG_FILE }}" 2>&1 &
-             echo $! > "${{ env.PID_FILE }}"'
+            "BINARY_PATH=${{ env.BINARY_PATH }} \
+             ENV_FILE=${{ env.ENV_FILE }} \
+             PID_FILE=${{ env.PID_FILE }} \
+             LOG_FILE=${{ env.LOG_FILE }} \
+             VAULTWARDEN_REMOTE_URL=${{ env.VAULTWARDEN_REMOTE_URL }} \
+             ${{ env.RESTART_HELPER }}"
 
       - name: Health check (with retry)
         run: |
@@ -143,6 +142,10 @@ jobs:
             if ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} "curl -sf --max-time 5 http://localhost:9500/health" > /dev/null 2>&1; then
               echo "Health check passed (attempt $i)"
               ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} "curl -sf http://localhost:9500/health" | jq '{version, activeConnections, configuredServices}'
+              ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+                "pid=\$(cat ${{ env.PID_FILE }}); \
+                 test \"\$(readlink /proc/\$pid/exe)\" = '${{ env.BINARY_PATH }}'; \
+                 kill -0 \"\$pid\""
               exit 0
             fi
             echo "Health check attempt $i failed, retrying..."
@@ -151,7 +154,7 @@ jobs:
           exit 1
 
       - name: Rollback on failure
-        if: failure()
+        if: failure() && steps.deploy_binary.outcome == 'success'
         run: |
           echo "Deployment failed -- rolling back to previous binary"
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
@@ -159,26 +162,12 @@ jobs:
              if [ -f "${{ env.BACKUP_PATH }}" ]; then
                mv "${{ env.BACKUP_PATH }}" "${{ env.BINARY_PATH }}"
                chmod 755 "${{ env.BINARY_PATH }}"
-               if [ -f "${{ env.PID_FILE }}" ]; then
-                 old_pid=$(cat "${{ env.PID_FILE }}")
-                 if kill -0 "$old_pid" 2>/dev/null; then
-                   kill "$old_pid" 2>/dev/null || true
-                   for _ in 1 2 3 4 5; do
-                     kill -0 "$old_pid" 2>/dev/null || break
-                     sleep 1
-                   done
-                   kill -0 "$old_pid" 2>/dev/null && kill -KILL "$old_pid" 2>/dev/null || true
-                 fi
-               fi
-               pgrep -u "${{ env.DEPLOY_USER }}" -f "^${{ env.BINARY_PATH }}$" | while read -r pid; do
-                 kill "$pid" 2>/dev/null || true
-               done
-               set -a
-               . "${{ env.ENV_FILE }}"
-               MCP2CLI_VAULTWARDEN_REMOTE_URL="${{ env.VAULTWARDEN_REMOTE_URL }}"
-               set +a
-               nohup "${{ env.BINARY_PATH }}" < /dev/null > "${{ env.LOG_FILE }}" 2>&1 &
-               echo $! > "${{ env.PID_FILE }}"
+               BINARY_PATH="${{ env.BINARY_PATH }}" \
+               ENV_FILE="${{ env.ENV_FILE }}" \
+               PID_FILE="${{ env.PID_FILE }}" \
+               LOG_FILE="${{ env.LOG_FILE }}" \
+               VAULTWARDEN_REMOTE_URL="${{ env.VAULTWARDEN_REMOTE_URL }}" \
+               "${{ env.RESTART_HELPER }}"
                echo "Rollback complete"
              else
                echo "No backup found -- manual intervention required"
@@ -191,6 +180,10 @@ jobs:
           sleep 5
           if ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} "curl -sf --max-time 5 http://localhost:9500/health" > /dev/null 2>&1; then
             echo "Rollback health check passed -- service restored"
+            ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+              "pid=\$(cat ${{ env.PID_FILE }}); \
+               test \"\$(readlink /proc/\$pid/exe)\" = '${{ env.BINARY_PATH }}'; \
+               kill -0 \"\$pid\""
           else
             echo "WARNING: Rollback health check failed -- service may be down"
             exit 1

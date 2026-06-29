@@ -1,5 +1,7 @@
 import { createLogger } from "../logger/index.ts";
 import type { ServiceConfig } from "../config/index.ts";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const log = createLogger("secret-refs");
 const SECRET_REF_PATTERN = /\$\{secret:([^}]+)\}/g;
@@ -105,7 +107,7 @@ function parseSecretRef(ref: string): { query: string; field?: string } {
 
 async function fetchVaultwardenCredential(query: string): Promise<unknown> {
   const timeoutMs = resolveTimeoutMs();
-  const remote = getVaultwardenRemoteConfig();
+  const remote = await getVaultwardenRemoteConfig();
   if (remote) {
     return fetchVaultwardenCredentialViaDaemon(query, remote, timeoutMs);
   }
@@ -162,7 +164,7 @@ async function fetchVaultwardenCredential(query: string): Promise<unknown> {
   }
 }
 
-function getVaultwardenRemoteConfig(): { url: string; token?: string } | null {
+async function getVaultwardenRemoteConfig(): Promise<{ url: string; token?: string } | null> {
   const explicitUrl = process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL;
   const inheritedUrl =
     process.env.MCP2CLI_VAULTWARDEN_USE_DAEMON === "1"
@@ -172,8 +174,61 @@ function getVaultwardenRemoteConfig(): { url: string; token?: string } | null {
   if (!url) return null;
   return {
     url,
-    token: process.env.MCP2CLI_VAULTWARDEN_AUTH_TOKEN ?? process.env.MCP2CLI_AUTH_TOKEN ?? process.env.MCP_TOKEN,
+    token: await resolveVaultwardenRemoteToken(url),
   };
+}
+
+async function resolveVaultwardenRemoteToken(url: string): Promise<string | undefined> {
+  const token =
+    process.env.MCP2CLI_VAULTWARDEN_AUTH_TOKEN ??
+    process.env.MCP2CLI_AUTH_TOKEN ??
+    process.env.MCP_TOKEN ??
+    await readDaemonTokenFile();
+
+  if (!token) return undefined;
+  if (shouldAttachRemoteAuth(url)) return token;
+
+  throw new SecretResolutionError(
+    `Refusing to forward Vaultwarden daemon auth to non-loopback URL: ${redactUrl(url)}`,
+  );
+}
+
+async function readDaemonTokenFile(): Promise<string | undefined> {
+  const tokensPath =
+    process.env.MCP2CLI_TOKENS_FILE ??
+    join(process.env.HOME ?? "", ".config", "mcp2cli", "tokens.json");
+  if (!tokensPath) return undefined;
+
+  try {
+    const parsed = JSON.parse(await readFile(tokensPath, "utf8")) as {
+      tokens?: Array<{ token?: unknown; role?: unknown; expiresAt?: unknown }>;
+    };
+    const tokenEntry = parsed.tokens?.find((entry) =>
+      entry.role === "admin" &&
+      typeof entry.token === "string" &&
+      !isExpiredToken(typeof entry.expiresAt === "string" ? entry.expiresAt : undefined)
+    );
+    return typeof tokenEntry?.token === "string" ? tokenEntry.token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isExpiredToken(expiresAt: string | undefined): boolean {
+  if (!expiresAt) return false;
+  const expiresAtMs = Date.parse(expiresAt);
+  return Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now();
+}
+
+function shouldAttachRemoteAuth(url: string): boolean {
+  if (process.env.MCP2CLI_VAULTWARDEN_ALLOW_REMOTE_AUTH === "1") return true;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "::1" || hostname.startsWith("127.");
+  } catch {
+    return false;
+  }
 }
 
 async function fetchVaultwardenCredentialViaDaemon(
@@ -274,4 +329,13 @@ function getPath(value: unknown, path: string): unknown {
 
 function redactRef(ref: string): string {
   return ref.length <= 4 ? "***" : `${ref.slice(0, 4)}***`;
+}
+
+function redactUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "***";
+  }
 }
