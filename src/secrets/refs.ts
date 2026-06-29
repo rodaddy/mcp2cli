@@ -119,6 +119,14 @@ async function fetchVaultwardenCredential(query: string): Promise<unknown> {
     stderr: "pipe",
     env: {
       ...process.env,
+      // Clear MCP2CLI_DAEMON so this child runs the CLI command, NOT a daemon.
+      // When the resolver runs INSIDE the daemon, the daemon's own
+      // MCP2CLI_DAEMON=1 is inherited via ...process.env; without clearing it the
+      // spawned `mcp2cli vaultwarden-secrets get_credential` boots a second daemon
+      // instead of resolving the secret, so every `${secret:...}` ref in a stdio
+      // service's env (e.g. gitingest's GITHUB_TOKEN) fails with "Vaultwarden
+      // lookup failed".
+      MCP2CLI_DAEMON: "",
       MCP2CLI_NO_DAEMON: process.env.MCP2CLI_VAULTWARDEN_USE_DAEMON === "1" ? "" : "1",
     },
   });

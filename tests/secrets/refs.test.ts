@@ -104,6 +104,30 @@ describe("VaultwardenSecretResolver", () => {
     expect(value).toBe("fixture-token");
   });
 
+  test("clears MCP2CLI_DAEMON in the resolver subprocess (runs CLI, not a daemon)", async () => {
+    // Regression: when the resolver runs INSIDE the daemon, the daemon's
+    // MCP2CLI_DAEMON=1 is inherited via process.env; without clearing it the
+    // spawned `mcp2cli vaultwarden-secrets` boots a daemon instead of resolving,
+    // breaking every ${secret:...} ref in a stdio service's env.
+    const originalDaemon = process.env.MCP2CLI_DAEMON;
+    process.env.MCP2CLI_DAEMON = "1"; // simulate running inside the daemon
+    process.env.MCP2CLI_VAULTWARDEN_COMMAND = Bun.argv[0]!;
+    process.env.MCP2CLI_VAULTWARDEN_COMMAND_ARGS = JSON.stringify([
+      "run",
+      resolve(import.meta.dir, "../fixtures/mock-vaultwarden-command.ts"),
+    ]);
+    try {
+      const resolver = new VaultwardenSecretResolver();
+      const value = await resolver.resolve("daemon-env-check#fields.token");
+      // The child must have seen MCP2CLI_DAEMON cleared, so it resolved normally
+      // instead of booting a daemon.
+      expect(value).toBe("resolved-not-as-daemon");
+    } finally {
+      if (originalDaemon !== undefined) process.env.MCP2CLI_DAEMON = originalDaemon;
+      else delete process.env.MCP2CLI_DAEMON;
+    }
+  });
+
   test("times out stalled Vaultwarden lookups", async () => {
     process.env.MCP2CLI_VAULTWARDEN_COMMAND = Bun.argv[0]!;
     process.env.MCP2CLI_VAULTWARDEN_COMMAND_ARGS = JSON.stringify([
