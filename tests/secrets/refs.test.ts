@@ -7,7 +7,9 @@ import {
 } from "../../src/secrets/index.ts";
 import type { SecretResolver } from "../../src/secrets/index.ts";
 import type { ServiceConfig } from "../../src/config/index.ts";
-import { resolve } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 describe("secret refs", () => {
   test("detects nested secret refs", () => {
@@ -69,25 +71,30 @@ describe("secret refs", () => {
 });
 
 describe("VaultwardenSecretResolver", () => {
-  const originalCommand = process.env.MCP2CLI_VAULTWARDEN_COMMAND;
-  const originalArgs = process.env.MCP2CLI_VAULTWARDEN_COMMAND_ARGS;
-  const originalTimeout = process.env.MCP2CLI_VAULTWARDEN_TIMEOUT_MS;
+  const envKeys = [
+    "MCP2CLI_VAULTWARDEN_COMMAND",
+    "MCP2CLI_VAULTWARDEN_COMMAND_ARGS",
+    "MCP2CLI_VAULTWARDEN_TIMEOUT_MS",
+    "MCP2CLI_VAULTWARDEN_REMOTE_URL",
+    "MCP2CLI_VAULTWARDEN_AUTH_TOKEN",
+    "MCP2CLI_VAULTWARDEN_USE_DAEMON",
+    "MCP2CLI_VAULTWARDEN_ALLOW_REMOTE_AUTH",
+    "MCP2CLI_AUTH_TOKEN",
+    "MCP_TOKEN",
+    ["MCP2CLI_REMOTE", "URL"].join("_"),
+    "MCP_HOST",
+    "MCP2CLI_TOKENS_FILE",
+  ] as const;
+  const originalEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
 
   afterEach(() => {
-    if (originalCommand !== undefined) {
-      process.env.MCP2CLI_VAULTWARDEN_COMMAND = originalCommand;
-    } else {
-      delete process.env.MCP2CLI_VAULTWARDEN_COMMAND;
-    }
-    if (originalArgs !== undefined) {
-      process.env.MCP2CLI_VAULTWARDEN_COMMAND_ARGS = originalArgs;
-    } else {
-      delete process.env.MCP2CLI_VAULTWARDEN_COMMAND_ARGS;
-    }
-    if (originalTimeout !== undefined) {
-      process.env.MCP2CLI_VAULTWARDEN_TIMEOUT_MS = originalTimeout;
-    } else {
-      delete process.env.MCP2CLI_VAULTWARDEN_TIMEOUT_MS;
+    for (const key of envKeys) {
+      const original = originalEnv.get(key);
+      if (original !== undefined) {
+        process.env[key] = original;
+      } else {
+        delete process.env[key];
+      }
     }
   });
 
@@ -126,6 +133,88 @@ describe("VaultwardenSecretResolver", () => {
       if (originalDaemon !== undefined) process.env.MCP2CLI_DAEMON = originalDaemon;
       else delete process.env.MCP2CLI_DAEMON;
     }
+  });
+
+  test("uses hosted daemon HTTP path when configured", async () => {
+    let sawAuth = false;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        expect(url.pathname).toBe("/call");
+        sawAuth = req.headers.get("Authorization") === "Bearer test-token";
+
+        const body = await req.json() as {
+          service?: string;
+          tool?: string;
+          params?: { query?: string };
+        };
+        expect(body).toEqual({
+          service: "vaultwarden-secrets",
+          tool: "get_credential",
+          params: { query: "hosted" },
+        });
+
+        return Response.json({
+          success: true,
+          result: { fields: { token: "hosted-token" } },
+        });
+      },
+    });
+
+    try {
+      process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL = `http://127.0.0.1:${server.port}`;
+      process.env.MCP2CLI_AUTH_TOKEN = "test-token";
+      const resolver = new VaultwardenSecretResolver();
+
+      await expect(resolver.resolve("hosted#fields.token")).resolves.toBe("hosted-token");
+      expect(sawAuth).toBe(true);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("uses daemon token file for hosted daemon HTTP auth", async () => {
+    let sawAuth = false;
+    const tempDir = await mkdtemp(join(tmpdir(), "mcp2cli-refs-"));
+    const tokensPath = join(tempDir, "tokens.json");
+    await writeFile(tokensPath, JSON.stringify({
+      tokens: [{ token: "file-token", role: "admin" }],
+    }));
+
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        sawAuth = req.headers.get("Authorization") === "Bearer file-token";
+        return Response.json({
+          success: true,
+          result: { fields: { token: "file-backed-token" } },
+        });
+      },
+    });
+
+    try {
+      delete process.env.MCP2CLI_AUTH_TOKEN;
+      delete process.env.MCP_TOKEN;
+      delete process.env.MCP2CLI_VAULTWARDEN_AUTH_TOKEN;
+      process.env.MCP2CLI_TOKENS_FILE = tokensPath;
+      process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL = `http://127.0.0.1:${server.port}`;
+      const resolver = new VaultwardenSecretResolver();
+
+      await expect(resolver.resolve("hosted#fields.token")).resolves.toBe("file-backed-token");
+      expect(sawAuth).toBe(true);
+    } finally {
+      server.stop(true);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses to forward daemon auth to non-loopback remotes by default", async () => {
+    process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL = "https://vaultwarden.example.test";
+    process.env.MCP2CLI_AUTH_TOKEN = "test-token";
+    const resolver = new VaultwardenSecretResolver();
+
+    await expect(resolver.resolve("hosted#fields.token")).rejects.toThrow(SecretResolutionError);
   });
 
   test("times out stalled Vaultwarden lookups", async () => {

@@ -72,8 +72,15 @@ jobs:
     env:
       DEPLOY_HOST: 10.71.20.63
       DEPLOY_USER: rico
-      SERVICE_NAME: mcp2cli
-      BINARY_PATH: /usr/local/bin/mcp2cli
+      BINARY_PATH: /home/rico/.local/bin/mcp2cli
+      DEPLOY_DIR: /home/rico/.local/share/mcp2cli
+      ENV_FILE: /home/rico/.config/mcp2cli/env
+      PID_FILE: /home/rico/.local/share/mcp2cli/run/mcp2cli.pid
+      LOG_FILE: /home/rico/.local/state/mcp2cli/log/mcp2cli.log
+      STAGED_BINARY: /home/rico/.local/share/mcp2cli/mcp2cli-new
+      BACKUP_PATH: /home/rico/.local/share/mcp2cli/backups/mcp2cli.bak
+      RESTART_HELPER: /home/rico/.local/share/mcp2cli/restart-hosted-daemon.sh
+      VAULTWARDEN_REMOTE_URL: http://127.0.0.1:9500
       HEALTH_URL: http://10.71.20.63:9500/health
 
     steps:
@@ -93,20 +100,40 @@ jobs:
       - name: Backup current binary
         run: |
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "sudo cp ${{ env.BINARY_PATH }} ${{ env.BINARY_PATH }}.bak 2>/dev/null || true"
+            "mkdir -p ${{ env.DEPLOY_DIR }}/backups ${{ env.DEPLOY_DIR }}/run /home/rico/.local/bin /home/rico/.local/state/mcp2cli/log && \
+             if [ -f ${{ env.BINARY_PATH }} ]; then \
+               cp ${{ env.BINARY_PATH }} ${{ env.BACKUP_PATH }}; \
+             fi"
+
+      - name: Deploy restart helper
+        run: |
+          scp scripts/deploy/restart-hosted-daemon.sh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:${{ env.RESTART_HELPER }}
+          ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+            "chmod 755 ${{ env.RESTART_HELPER }} && \
+             sh -n ${{ env.RESTART_HELPER }} && \
+             BINARY_PATH=${{ env.BINARY_PATH }} \
+             ENV_FILE=${{ env.ENV_FILE }} \
+             PID_FILE=${{ env.PID_FILE }} \
+             LOG_FILE=${{ env.LOG_FILE }} \
+             ${{ env.RESTART_HELPER }} --check"
 
       - name: Deploy new binary
+        id: deploy_binary
         run: |
-          scp dist/mcp2cli ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/mcp2cli-new
+          scp dist/mcp2cli ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:${{ env.STAGED_BINARY }}
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "sudo mv /tmp/mcp2cli-new ${{ env.BINARY_PATH }} && \
-             sudo chmod +x ${{ env.BINARY_PATH }} && \
-             sudo chown mcp2cli:mcp2cli ${{ env.BINARY_PATH }}"
+            "mv ${{ env.STAGED_BINARY }} ${{ env.BINARY_PATH }} && \
+             chmod 755 ${{ env.BINARY_PATH }}"
 
-      - name: Restart service
+      - name: Restart hosted daemon
         run: |
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "sudo systemctl restart ${{ env.SERVICE_NAME }}"
+            "BINARY_PATH=${{ env.BINARY_PATH }} \
+             ENV_FILE=${{ env.ENV_FILE }} \
+             PID_FILE=${{ env.PID_FILE }} \
+             LOG_FILE=${{ env.LOG_FILE }} \
+             VAULTWARDEN_REMOTE_URL=${{ env.VAULTWARDEN_REMOTE_URL }} \
+             ${{ env.RESTART_HELPER }}"
 
       - name: Health check (with retry)
         run: |
@@ -115,6 +142,10 @@ jobs:
             if ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} "curl -sf --max-time 5 http://localhost:9500/health" > /dev/null 2>&1; then
               echo "Health check passed (attempt $i)"
               ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} "curl -sf http://localhost:9500/health" | jq '{version, activeConnections, configuredServices}'
+              ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+                "pid=\$(cat ${{ env.PID_FILE }}); \
+                 test \"\$(readlink /proc/\$pid/exe)\" = '${{ env.BINARY_PATH }}'; \
+                 kill -0 \"\$pid\""
               exit 0
             fi
             echo "Health check attempt $i failed, retrying..."
@@ -123,18 +154,25 @@ jobs:
           exit 1
 
       - name: Rollback on failure
-        if: failure()
+        if: failure() && steps.deploy_binary.outcome == 'success'
         run: |
           echo "Deployment failed -- rolling back to previous binary"
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "if [ -f ${{ env.BINARY_PATH }}.bak ]; then \
-               sudo mv ${{ env.BINARY_PATH }}.bak ${{ env.BINARY_PATH }} && \
-               sudo systemctl restart ${{ env.SERVICE_NAME }} && \
-               echo 'Rollback complete'; \
-             else \
-               echo 'No backup found -- manual intervention required'; \
-               exit 1; \
-             fi"
+            'set -eu
+             if [ -f "${{ env.BACKUP_PATH }}" ]; then
+               mv "${{ env.BACKUP_PATH }}" "${{ env.BINARY_PATH }}"
+               chmod 755 "${{ env.BINARY_PATH }}"
+               BINARY_PATH="${{ env.BINARY_PATH }}" \
+               ENV_FILE="${{ env.ENV_FILE }}" \
+               PID_FILE="${{ env.PID_FILE }}" \
+               LOG_FILE="${{ env.LOG_FILE }}" \
+               VAULTWARDEN_REMOTE_URL="${{ env.VAULTWARDEN_REMOTE_URL }}" \
+               "${{ env.RESTART_HELPER }}"
+               echo "Rollback complete"
+             else
+               echo "No backup found -- manual intervention required"
+               exit 1
+             fi'
 
       - name: Verify rollback health
         if: failure()
@@ -142,19 +180,27 @@ jobs:
           sleep 5
           if ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} "curl -sf --max-time 5 http://localhost:9500/health" > /dev/null 2>&1; then
             echo "Rollback health check passed -- service restored"
+            ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+              "pid=\$(cat ${{ env.PID_FILE }}); \
+               test \"\$(readlink /proc/\$pid/exe)\" = '${{ env.BINARY_PATH }}'; \
+               kill -0 \"\$pid\""
           else
             echo "WARNING: Rollback health check failed -- service may be down"
             exit 1
           fi
 
-      - name: Clean up backup
+      - name: Archive backup
         if: success()
         run: |
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
-            "sudo rm -f ${{ env.BINARY_PATH }}.bak"
+            "if [ -f ${{ env.BACKUP_PATH }} ]; then \
+               mv ${{ env.BACKUP_PATH }} ${{ env.DEPLOY_DIR }}/backups/mcp2cli-${{ github.sha }}.bak; \
+             fi"
 
       - name: Report deployed version
         if: success()
         run: |
           echo "Deployed version: ${{ needs.version-bump.outputs.new_version }}"
           ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} "curl -sf http://localhost:9500/health" | jq '{version, activeConnections, configuredServices}'
+          ssh ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} \
+            "pid=\$(cat ${{ env.PID_FILE }}); ps -p \"\$pid\" -o pid=,ppid=,user=,command="
