@@ -72,6 +72,8 @@ describe("VaultwardenSecretResolver", () => {
   const originalCommand = process.env.MCP2CLI_VAULTWARDEN_COMMAND;
   const originalArgs = process.env.MCP2CLI_VAULTWARDEN_COMMAND_ARGS;
   const originalTimeout = process.env.MCP2CLI_VAULTWARDEN_TIMEOUT_MS;
+  const originalRemoteUrl = process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL;
+  const originalAuthToken = process.env.MCP2CLI_AUTH_TOKEN;
 
   afterEach(() => {
     if (originalCommand !== undefined) {
@@ -88,6 +90,16 @@ describe("VaultwardenSecretResolver", () => {
       process.env.MCP2CLI_VAULTWARDEN_TIMEOUT_MS = originalTimeout;
     } else {
       delete process.env.MCP2CLI_VAULTWARDEN_TIMEOUT_MS;
+    }
+    if (originalRemoteUrl !== undefined) {
+      process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL = originalRemoteUrl;
+    } else {
+      delete process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL;
+    }
+    if (originalAuthToken !== undefined) {
+      process.env.MCP2CLI_AUTH_TOKEN = originalAuthToken;
+    } else {
+      delete process.env.MCP2CLI_AUTH_TOKEN;
     }
   });
 
@@ -125,6 +137,45 @@ describe("VaultwardenSecretResolver", () => {
     } finally {
       if (originalDaemon !== undefined) process.env.MCP2CLI_DAEMON = originalDaemon;
       else delete process.env.MCP2CLI_DAEMON;
+    }
+  });
+
+  test("uses hosted daemon HTTP path when configured", async () => {
+    let sawAuth = false;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        expect(url.pathname).toBe("/call");
+        sawAuth = req.headers.get("Authorization") === "Bearer test-token";
+
+        const body = await req.json() as {
+          service?: string;
+          tool?: string;
+          params?: { query?: string };
+        };
+        expect(body).toEqual({
+          service: "vaultwarden-secrets",
+          tool: "get_credential",
+          params: { query: "hosted" },
+        });
+
+        return Response.json({
+          success: true,
+          result: { fields: { token: "hosted-token" } },
+        });
+      },
+    });
+
+    try {
+      process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL = `http://127.0.0.1:${server.port}`;
+      process.env.MCP2CLI_AUTH_TOKEN = "test-token";
+      const resolver = new VaultwardenSecretResolver();
+
+      await expect(resolver.resolve("hosted#fields.token")).resolves.toBe("hosted-token");
+      expect(sawAuth).toBe(true);
+    } finally {
+      server.stop(true);
     }
   });
 

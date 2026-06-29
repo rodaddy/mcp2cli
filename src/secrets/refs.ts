@@ -104,9 +104,14 @@ function parseSecretRef(ref: string): { query: string; field?: string } {
 }
 
 async function fetchVaultwardenCredential(query: string): Promise<unknown> {
+  const timeoutMs = resolveTimeoutMs();
+  const remote = getVaultwardenRemoteConfig();
+  if (remote) {
+    return fetchVaultwardenCredentialViaDaemon(query, remote, timeoutMs);
+  }
+
   const command = process.env.MCP2CLI_VAULTWARDEN_COMMAND ?? "mcp2cli";
   const commandArgs = parseCommandArgs(process.env.MCP2CLI_VAULTWARDEN_COMMAND_ARGS);
-  const timeoutMs = resolveTimeoutMs();
   const proc = Bun.spawn([
     command,
     ...commandArgs,
@@ -151,6 +156,63 @@ async function fetchVaultwardenCredential(query: string): Promise<unknown> {
 
   try {
     const parsed = JSON.parse(stdout);
+    return unwrapMcpResult(parsed);
+  } catch {
+    throw new SecretResolutionError(`Vaultwarden lookup returned non-JSON output for ${redactRef(query)}`);
+  }
+}
+
+function getVaultwardenRemoteConfig(): { url: string; token?: string } | null {
+  const explicitUrl = process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL;
+  const inheritedUrl =
+    process.env.MCP2CLI_VAULTWARDEN_USE_DAEMON === "1"
+      ? process.env.MCP2CLI_REMOTE_URL ?? process.env.MCP_HOST
+      : undefined;
+  const url = explicitUrl ?? inheritedUrl;
+  if (!url) return null;
+  return {
+    url,
+    token: process.env.MCP2CLI_VAULTWARDEN_AUTH_TOKEN ?? process.env.MCP2CLI_AUTH_TOKEN ?? process.env.MCP_TOKEN,
+  };
+}
+
+async function fetchVaultwardenCredentialViaDaemon(
+  query: string,
+  remote: { url: string; token?: string },
+  timeoutMs: number,
+): Promise<unknown> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (remote.token) {
+    headers.Authorization = `Bearer ${remote.token}`;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${remote.url.replace(/\/$/, "")}/call`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        service: "vaultwarden-secrets",
+        tool: "get_credential",
+        params: { query },
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    const timedOut = err instanceof Error && err.name === "TimeoutError";
+    throw new SecretResolutionError(
+      `Vaultwarden lookup failed for ${redactRef(query)}${timedOut ? " (timeout)" : ""}`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new SecretResolutionError(`Vaultwarden lookup failed for ${redactRef(query)}`);
+  }
+
+  try {
+    const parsed = await response.json();
     return unwrapMcpResult(parsed);
   } catch {
     throw new SecretResolutionError(`Vaultwarden lookup returned non-JSON output for ${redactRef(query)}`);
