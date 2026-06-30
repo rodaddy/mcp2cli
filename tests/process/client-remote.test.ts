@@ -429,11 +429,13 @@ describe("remote-aware source resolution", () => {
 
   test("honors remote request timeout override for hosted tool calls", async () => {
     server.stop(true);
+    let remoteCalls = 0;
     server = Bun.serve({
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
         if (url.pathname === "/call") {
+          remoteCalls += 1;
           await new Promise((resolve) => setTimeout(resolve, 50));
           return Response.json({ success: true, result: { ok: true } });
         }
@@ -466,14 +468,17 @@ describe("remote-aware source resolution", () => {
       expect(timedOut.error.code).toBe("CONNECTION_ERROR");
       expect(timedOut.error.message).toContain("timed out");
     }
+    expect(remoteCalls).toBe(3);
 
     process.env.MCP2CLI_REMOTE_REQUEST_TIMEOUT_MS = "250";
+    remoteCalls = 0;
     const succeeded = await callViaDaemon({
       service: "slow-remote",
       tool: "wait",
       params: {},
     });
     expect(succeeded).toEqual({ success: true, result: { ok: true } });
+    expect(remoteCalls).toBe(1);
   });
 
   test("uses short fallback timeout for remote-local services", async () => {

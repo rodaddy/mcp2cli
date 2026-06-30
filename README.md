@@ -218,6 +218,7 @@ fi
 | `MCP2CLI_STARTUP_TIMEOUT` | `10000` | CLI wait time for daemon startup readiness in milliseconds |
 | `MCP2CLI_TOOL_TIMEOUT` | `30000` | Tool call timeout in milliseconds |
 | `MCP2CLI_REMOTE_REQUEST_TIMEOUT_MS` | `60000` | CLI HTTP request timeout for explicit remote daemon calls in milliseconds |
+| `MCP2CLI_REMOTE_RETRIES` | `3` | Remote request attempts for explicit remote daemon calls |
 | `MCP2CLI_REMOTE_FALLBACK_TIMEOUT_MS` | `10000` | CLI HTTP timeout for each `remote-local` probe before falling back to the local daemon |
 | `MCP2CLI_REMOTE_FALLBACK_RETRIES` | `1` | Remote probe attempts before `remote-local` calls fall back to the local daemon |
 | `MCP2CLI_POOL_MAX` | `50` | Max concurrent MCP connections in the pool |
