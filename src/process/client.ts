@@ -32,8 +32,17 @@ const STARTUP_TIMEOUT_MS = readPositiveIntEnv(
 );
 const STARTUP_POLL_MS = 50;
 const REQUEST_TIMEOUT_MS = 60_000;
-const REMOTE_CONNECT_TIMEOUT_MS = 10_000;
 const STALE_LOCK_THRESHOLD_MS = 30_000;
+
+function remoteRequestTimeoutMs(source: ServiceSource): number {
+  if (source === "remote-local") {
+    return readPositiveIntEnv("MCP2CLI_REMOTE_FALLBACK_TIMEOUT_MS", 10_000);
+  }
+  return readPositiveIntEnv(
+    "MCP2CLI_REMOTE_REQUEST_TIMEOUT_MS",
+    REQUEST_TIMEOUT_MS,
+  );
+}
 
 /** Cached local token to avoid re-reading tokens.json on every request. */
 let cachedLocalToken: string | undefined;
@@ -377,8 +386,16 @@ const REMOTE_BACKOFF_BASE_MS = parseInt(
   10,
 );
 
+function remoteRetries(source: ServiceSource): number {
+  if (source === "remote-local") {
+    return readPositiveIntEnv("MCP2CLI_REMOTE_FALLBACK_RETRIES", 1);
+  }
+  return REMOTE_RETRIES;
+}
+
 async function fetchRemote(
   path: string,
+  source: ServiceSource,
   body?: unknown,
 ): Promise<DaemonResponse> {
   const remote = getRemoteConfig()!;
@@ -391,13 +408,14 @@ async function fetchRemote(
   }
 
   let lastError: unknown;
-  for (let attempt = 0; attempt < REMOTE_RETRIES; attempt++) {
+  const maxAttempts = remoteRetries(source);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const response = await fetch(url, {
         method: "POST",
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(REMOTE_CONNECT_TIMEOUT_MS),
+        signal: AbortSignal.timeout(remoteRequestTimeoutMs(source)),
       });
 
       // Auth errors are permanent -- don't retry (wrong token won't become right)
@@ -422,7 +440,7 @@ async function fetchRemote(
         throw err;
       }
       lastError = err;
-      if (attempt < REMOTE_RETRIES - 1) {
+      if (attempt < maxAttempts - 1) {
         const delay = REMOTE_BACKOFF_BASE_MS * Math.pow(2, attempt);
         await new Promise((r) => setTimeout(r, delay));
       }
@@ -458,12 +476,12 @@ async function fetchDaemon(
     }
 
     if (source === "remote") {
-      return await fetchRemote(path, body);
+      return await fetchRemote(path, source, body);
     }
 
     // "remote-local": try remote, fall back to local
     try {
-      return await fetchRemote(path, body);
+      return await fetchRemote(path, source, body);
     } catch (err) {
       if (isRemoteAuthError(err)) {
         throw err;
