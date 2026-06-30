@@ -217,6 +217,9 @@ fi
 | `MCP2CLI_IDLE_TIMEOUT` | `60` | Daemon idle timeout in seconds |
 | `MCP2CLI_STARTUP_TIMEOUT` | `10000` | CLI wait time for daemon startup readiness in milliseconds |
 | `MCP2CLI_TOOL_TIMEOUT` | `30000` | Tool call timeout in milliseconds |
+| `MCP2CLI_REMOTE_REQUEST_TIMEOUT_MS` | `60000` | CLI HTTP request timeout for explicit remote daemon calls in milliseconds |
+| `MCP2CLI_REMOTE_FALLBACK_TIMEOUT_MS` | `10000` | CLI HTTP timeout for each `remote-local` probe before falling back to the local daemon |
+| `MCP2CLI_REMOTE_FALLBACK_RETRIES` | `1` | Remote probe attempts before `remote-local` calls fall back to the local daemon |
 | `MCP2CLI_POOL_MAX` | `50` | Max concurrent MCP connections in the pool |
 | `MCP2CLI_LOG_DIR` | `~/.cache/mcp2cli/logs` | Directory for stderr capture logs |
 | `MCP2CLI_NO_DAEMON` | (unset) | If set, bypass the daemon and connect directly |
