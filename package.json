@@ -1,6 +1,6 @@
 {
   "name": "mcp2cli",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "CLI bridge that wraps MCP servers as bash-invokable commands, recovering ~11K tokens of context window per session",
   "type": "module",
   "license": "MIT",
