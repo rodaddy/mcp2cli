@@ -3,6 +3,11 @@ import { ConnectionError } from "./errors.ts";
 import { createMcpClient } from "./capabilities.ts";
 import type { ConnectionOptions, McpConnection } from "./types.ts";
 import type { StdioService } from "../config/schema.ts";
+import {
+  resolveServiceSecretRefs,
+  VaultwardenSecretResolver,
+} from "../secrets/index.ts";
+import type { SecretResolver } from "../secrets/index.ts";
 import { createLogger } from "../logger/index.ts";
 
 const log = createLogger("connection");
@@ -11,17 +16,30 @@ const log = createLogger("connection");
  * Connect to an MCP server via stdio transport.
  * Spawns the process, completes the initialization handshake, returns a live connection.
  * Enforces timeout -- server hang won't block indefinitely.
+ *
+ * ${secret:...} references in the service's `env` and `args` are resolved here,
+ * before the child is spawned, so no stdio spawn path can leak a literal ref
+ * into the child's environment (#65). Resolution is idempotent: an already
+ * resolved config has no remaining refs, so callers that resolve upstream
+ * (the direct CLI path and the daemon pool) incur no extra secret lookups.
  */
 export async function connectToService(
   service: StdioService,
-  options?: { timeout?: number },
+  options?: { timeout?: number; resolver?: SecretResolver },
 ): Promise<McpConnection> {
   const timeout = options?.timeout ?? 30000;
 
+  const resolver = options?.resolver ?? new VaultwardenSecretResolver();
+  const resolved = (await resolveServiceSecretRefs(
+    service.command,
+    service,
+    resolver,
+  )) as StdioService;
+
   const connOpts: ConnectionOptions = {
-    command: service.command,
-    args: service.args,
-    env: service.env,
+    command: resolved.command,
+    args: resolved.args,
+    env: resolved.env,
     timeout,
   };
 
