@@ -7,6 +7,8 @@
  * tools/call "echo_env" returns { env, argv } as JSON text content.
  */
 
+export {}; // mark as a module so top-level `for await` is valid under strict TS (TS1431)
+
 let buffer = "";
 const decoder = new TextDecoder();
 
