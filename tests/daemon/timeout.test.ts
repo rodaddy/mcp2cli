@@ -39,12 +39,40 @@ function makeConfig(): ServicesConfig {
   };
 }
 
+/**
+ * Error shape the real MCP SDK raises when its own request deadline fires:
+ * a JSON-RPC error carrying ErrorCode.RequestTimeout (-32001).
+ */
+class FakeMcpTimeoutError extends Error {
+  readonly code = -32001;
+  constructor(timeoutMs: number) {
+    super(`MCP error -32001: Request timed out after ${timeoutMs}ms`);
+  }
+}
+
+/**
+ * Stands in for the SDK client. The deadline lives HERE, driven by the
+ * RequestOptions the daemon passes in -- which is the contract under test
+ * (rtech-infra#418). A fake that ignores the options argument would pass
+ * whether or not the daemon forwarded the timeout at all.
+ */
 class FakePool {
   async getConnection() {
     return {
       client: {
-        async callTool(request: { arguments?: { delay_ms?: number } }) {
+        async callTool(
+          request: { arguments?: { delay_ms?: number } },
+          _resultSchema?: unknown,
+          options?: { timeout?: number },
+        ) {
           const delay = request.arguments?.delay_ms ?? 0;
+          const timeout = options?.timeout;
+
+          if (timeout !== undefined && delay > timeout) {
+            await new Promise((r) => setTimeout(r, timeout));
+            throw new FakeMcpTimeoutError(timeout);
+          }
+
           await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
           return {
             content: [
@@ -117,5 +145,70 @@ describe("MEM-02: Tool call timeout", () => {
     expect(parsed.error?.code).toBe("TOOL_TIMEOUT");
     expect(parsed.error?.message).toContain("timed out");
     expect(parsed.error?.message).toContain("500ms");
+  });
+
+  // rtech-infra#418: the SDK applies DEFAULT_REQUEST_TIMEOUT_MSEC (60s) to any
+  // callTool that receives no RequestOptions, so a per-service timeout that is
+  // never handed to the SDK is inert. Assert the options object directly --
+  // an outer deadline in the daemon cannot substitute for it.
+  test("per-service timeout is passed into the SDK callTool options", async () => {
+    const seen: Array<{ timeout?: number; resetTimeoutOnProgress?: boolean; maxTotalTimeout?: number }> = [];
+
+    const recordingPool = {
+      async getConnection() {
+        return {
+          client: {
+            async callTool(
+              _request: unknown,
+              _resultSchema?: unknown,
+              options?: {
+                timeout?: number;
+                resetTimeoutOnProgress?: boolean;
+                maxTotalTimeout?: number;
+              },
+            ) {
+              seen.push(options ?? {});
+              return { content: [{ type: "text", text: "{}" }] };
+            },
+          },
+        };
+      },
+      async closeAll() {},
+    } as unknown as ConnectionPool;
+
+    const recordingServer = createDaemonServer({
+      listenConfig: {
+        mode: "unix",
+        socketPath: join(tempDir, "daemon-record.sock"),
+      },
+      pool: recordingPool,
+      // slowOk declares timeout: 30_000
+      config: makeConfig(),
+      idleTimer: new IdleTimer(60_000, () => {}),
+      onShutdown: () => {},
+      authProvider: new TokenAuthProvider([]),
+      metrics: new MetricsCollector(),
+    });
+
+    try {
+      await recordingServer.fetch(
+        new Request("http://localhost/call", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            service: "slowOk",
+            tool: "slow_tool",
+            params: {},
+          }),
+        }),
+      );
+    } finally {
+      recordingServer.stop(true);
+    }
+
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.timeout).toBe(30_000);
+    expect(seen[0]?.maxTotalTimeout).toBe(30_000);
+    expect(seen[0]?.resetTimeoutOnProgress).toBe(true);
   });
 });

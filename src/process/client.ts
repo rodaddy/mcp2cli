@@ -31,7 +31,19 @@ const STARTUP_TIMEOUT_MS = readPositiveIntEnv(
   10_000,
 );
 const STARTUP_POLL_MS = 50;
-const REQUEST_TIMEOUT_MS = 60_000;
+/**
+ * CLI-side deadline for a single daemon request over the Unix socket.
+ *
+ * rtech-infra#418: this was a hard 60s constant with no override, so it capped
+ * every local call even when the daemon and the service were configured for a
+ * far longer verb. Raising only the daemon-side deadline changes nothing while
+ * this one still fires. Default stays 60s -- it is the interactive hang guard
+ * -- and long verbs opt out per invocation.
+ */
+const REQUEST_TIMEOUT_MS = readPositiveIntEnv(
+  "MCP2CLI_REQUEST_TIMEOUT_MS",
+  60_000,
+);
 const STALE_LOCK_THRESHOLD_MS = 30_000;
 
 function remoteRequestTimeoutMs(source: ServiceSource): number {
