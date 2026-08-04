@@ -216,7 +216,8 @@ fi
 | `MCP2CLI_LOG_LEVEL` | `silent` | Log verbosity: `silent`, `error`, `warn`, `info`, `debug` |
 | `MCP2CLI_IDLE_TIMEOUT` | `60` | Daemon idle timeout in seconds |
 | `MCP2CLI_STARTUP_TIMEOUT` | `10000` | CLI wait time for daemon startup readiness in milliseconds |
-| `MCP2CLI_TOOL_TIMEOUT` | `30000` | Tool call timeout in milliseconds |
+| `MCP2CLI_TOOL_TIMEOUT` | `60000` | Tool call timeout in milliseconds. A per-service `timeout` in `services.json` overrides it, and the resolved value is passed to the MCP SDK, so it bounds the call for real |
+| `MCP2CLI_REQUEST_TIMEOUT_MS` | `60000` | CLI request timeout for local Unix-socket daemon calls in milliseconds. Raise it alongside a long per-service `timeout`, otherwise the CLI gives up before the verb finishes |
 | `MCP2CLI_REMOTE_REQUEST_TIMEOUT_MS` | `60000` | CLI HTTP request timeout for explicit remote daemon calls in milliseconds |
 | `MCP2CLI_REMOTE_RETRIES` | `3` | Remote request attempts for explicit remote daemon calls |
 | `MCP2CLI_REMOTE_FALLBACK_TIMEOUT_MS` | `10000` | CLI HTTP timeout for each `remote-local` probe before falling back to the local daemon |
@@ -232,6 +233,36 @@ Example:
 MCP2CLI_LOG_LEVEL=debug mcp2cli n8n n8n_list_workflows --params '{}'
 MCP2CLI_NO_DAEMON=1 mcp2cli n8n n8n_list_workflows --params '{}'
 ```
+
+### Tool calls longer than 60 seconds
+
+A slow verb passes through **two independent deadlines**, and raising only one
+changes nothing — the other still fires first:
+
+1. **Daemon → MCP server.** The per-service `timeout` in `services.json`
+   (falling back to `MCP2CLI_TOOL_TIMEOUT`, default 60s) is handed to the MCP
+   SDK on every tool call. Without it the SDK applies its own
+   `DEFAULT_REQUEST_TIMEOUT_MSEC` of 60s and fails with
+   `MCP error -32001: Request timed out`.
+2. **CLI → daemon.** `MCP2CLI_REQUEST_TIMEOUT_MS` (default 60s) bounds the
+   local Unix-socket request. When it fires the CLI reports
+   `CONNECTION_ERROR: The operation timed out.` even though the daemon and the
+   MCP server are still working.
+
+So a verb that can run for 20 minutes needs both:
+
+```jsonc
+// services.json
+{ "services": { "runner-boxes": { "timeout": 1200000 /* ...*/ } } }
+```
+
+```bash
+MCP2CLI_REQUEST_TIMEOUT_MS=1200000 mcp2cli runner-boxes runner_done --params '{}'
+```
+
+A timed-out call is **not** a failed verb: the server-side work may well have
+completed after the client stopped waiting. Do not blind-retry a
+non-idempotent verb on a timeout.
 
 ## Architecture
 

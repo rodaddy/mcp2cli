@@ -84,6 +84,22 @@ function errorResponse(
 }
 
 /**
+ * JSON-RPC error code the MCP SDK raises when its own request deadline fires.
+ * Matches the SDK's `ErrorCode.RequestTimeout`; checked structurally so an
+ * McpError from any SDK copy is recognised without a runtime import.
+ */
+const MCP_REQUEST_TIMEOUT_CODE = -32001;
+
+function isRequestTimeoutError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code: unknown }).code === MCP_REQUEST_TIMEOUT_CODE
+  );
+}
+
+/**
  * Create the daemon HTTP server bound to a Unix socket or TCP port.
  * Returns the Bun.serve() server instance.
  */
@@ -246,8 +262,20 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             body.service,
           );
 
-          // MEM-02: AbortSignal timeout on tool calls
-          // Priority: per-service config > MCP2CLI_TOOL_TIMEOUT env > 30s default
+          // MEM-02: tool call timeout.
+          // Priority: per-service config > MCP2CLI_TOOL_TIMEOUT env > default.
+          //
+          // rtech-infra#418: this value MUST be handed to the SDK itself. The
+          // SDK applies DEFAULT_REQUEST_TIMEOUT_MSEC (60s) to every callTool
+          // that receives no RequestOptions, so a purely local deadline (the
+          // old Promise.race/AbortController) could never extend a call past
+          // 60s -- the SDK's own timer always fired first and a configured
+          // `timeout: 3700000` was inert. One deadline, owned by the SDK.
+          //
+          // The default is 60_000 rather than the historical 30_000 because
+          // 60s is the deadline services have actually been observed under
+          // (the SDK's). Lowering it here would newly break long verbs in
+          // services that never set an explicit timeout.
           const serviceConfig =
             serviceConfigOverride ?? getConfig().services[body.service];
           const perServiceTimeout =
@@ -256,9 +284,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
               : undefined;
           const timeout =
             perServiceTimeout ??
-            parseInt(process.env.MCP2CLI_TOOL_TIMEOUT ?? "30000", 10);
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), timeout);
+            parseInt(process.env.MCP2CLI_TOOL_TIMEOUT ?? "60000", 10);
 
           // Resolve transport type from service config
           if (serviceConfig) {
@@ -306,24 +332,32 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           let sdkResult: Awaited<ReturnType<typeof conn.client.callTool>>;
           const mcpStartTime = performance.now();
           try {
-            sdkResult = await Promise.race([
-              conn.client.callTool({
+            sdkResult = await conn.client.callTool(
+              {
                 name: resolvedTool,
                 arguments: body.params,
-              }),
-              new Promise<never>((_, reject) => {
-                controller.signal.addEventListener("abort", () =>
-                  reject(
-                    new ToolError(
-                      `Tool call timed out after ${timeout}ms`,
-                      body.tool,
-                    ),
-                  ),
-                );
-              }),
-            ]);
-          } finally {
-            clearTimeout(timer);
+              },
+              undefined,
+              {
+                timeout,
+                // Long verbs that emit progress keep the deadline alive, but
+                // maxTotalTimeout caps the total so progress cannot extend a
+                // call forever.
+                resetTimeoutOnProgress: true,
+                maxTotalTimeout: timeout,
+              },
+            );
+          } catch (err) {
+            // Surface an SDK request timeout as this daemon's own timeout
+            // error, so callers see one consistent shape regardless of which
+            // layer noticed. MCP error -32001 is RequestTimeout.
+            if (isRequestTimeoutError(err)) {
+              throw new ToolError(
+                `Tool call timed out after ${timeout}ms`,
+                body.tool,
+              );
+            }
+            throw err;
           }
           const mcpDuration = Math.round(performance.now() - mcpStartTime);
 
