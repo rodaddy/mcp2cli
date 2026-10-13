@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { writeAuditEntry, auditToolCall, flushAuditQueue, _resetAuditState } from "../../src/logger/audit.ts";
 import type { AuditEntry } from "../../src/logger/audit.ts";
+import { formatToolResult } from "../../src/invocation/format.ts";
 
 let testDir: string;
 let origLogDir: string | undefined;
@@ -88,7 +89,7 @@ describe("writeAuditEntry", () => {
       timestamp: "2026-06-08T12:00:00Z",
       path: "cli",
       service: "vw",
-      tool: "get_secret",
+      tool: "lookup",
       params: { name: "test", api_key: "sk-12345", query: "safe" },
       durationMs: 50,
       success: true,
@@ -250,7 +251,7 @@ describe("writeAuditEntry", () => {
       timestamp: "2026-06-08T12:00:00Z",
       path: "cli",
       service: "test",
-      tool: "auth_test",
+      tool: "identity_test",
       params: {
         author: "Jane Doe",
         authority: "admin-panel",
@@ -354,6 +355,138 @@ describe("auditToolCall", () => {
     expect(entries[0]!.role).toBe("agent");
     expect(entries[0]!.resolvedTool).toBe("test-svc_short_name");
     expect(entries[0]!.transport).toBe("stdio");
+  });
+
+  // SOF-2878: vault tools return the secret under keys the key-name sanitizer does not
+  // know (`text`, `value`), so the value itself must never reach responseSummary.
+  test("does not store the value returned by get_secret", async () => {
+    auditToolCall({
+      path: "cli",
+      service: "vaultwarden-secrets",
+      tool: "get_secret",
+      params: { name: "Grafana - Admin", field: "login.password" },
+      result: { content: [{ type: "text", text: "hunter2-plaintext-value" }] },
+      durationMs: 12,
+      success: true,
+    });
+    await flushAuditQueue();
+
+    const entries = await readAuditFile();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.responseSummary).not.toContain("hunter2-plaintext-value");
+    expect(entries[0]!.responseSummary).toMatch(/^\[REDACTED: \d+ chars\]$/);
+    expect(entries[0]!.params).toEqual({ name: "[REDACTED]", field: "[REDACTED]" });
+  });
+
+  test("does not store the value returned by get_credential, by tool or resolved tool name", async () => {
+    auditToolCall({
+      path: "daemon",
+      service: "vw",
+      tool: "cred",
+      resolvedTool: "get_credential",
+      params: { query: "PROXMOX_API" },
+      result: { value: "0123456789abcdef0123456789abcdef01234567" },
+      durationMs: 12,
+      success: true,
+    });
+    await flushAuditQueue();
+
+    const entries = await readAuditFile();
+    expect(entries[0]!.responseSummary).not.toContain("0123456789abcdef");
+    expect(entries[0]!.responseSummary).toMatch(/^\[REDACTED: \d+ chars\]$/);
+  });
+
+  test("does not store any response from a service whose name marks it as a secret store", async () => {
+    auditToolCall({
+      path: "cli",
+      service: "vaultwarden-secrets",
+      tool: "get_service",
+      params: { name: "n8n" },
+      result: { content: [{ type: "text", text: '{"url":"https://n8n","key":"plain-key-value"}' }] },
+      durationMs: 12,
+      success: true,
+    });
+    await flushAuditQueue();
+
+    const entries = await readAuditFile();
+    expect(entries[0]!.responseSummary).not.toContain("plain-key-value");
+  });
+
+  test("matches direct secret tool names independently of the service and resolved tool", async () => {
+    for (const tool of ["get_secret", "get_credential"]) {
+      auditToolCall({
+        path: "cli",
+        service: "vw",
+        tool,
+        result: { value: "direct-tool-fixture" },
+        durationMs: 12,
+        success: true,
+      });
+    }
+    await flushAuditQueue();
+
+    const entries = await readAuditFile();
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) {
+      expect(entry.responseSummary).toMatch(/^\[REDACTED: \d+ chars\]$/);
+    }
+  });
+
+  test("does not store secret inputs under neutral param keys", async () => {
+    for (const path of ["cli", "daemon"] as const) {
+      auditToolCall({
+        path,
+        service: "vaultwarden-secrets",
+        tool: "set_secret",
+        params: { name: "fixture", value: "param-fixture", data: { text: "nested-fixture" } },
+        durationMs: 12,
+        success: true,
+      });
+    }
+    await flushAuditQueue();
+
+    const entries = await readAuditFile();
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) {
+      expect(entry.params).toEqual({ name: "[REDACTED]", value: "[REDACTED]", data: "[REDACTED]" });
+      expect(entry.success).toBe(true);
+      expect(entry.durationMs).toBe(12);
+    }
+  });
+
+  test("does not store secret values echoed in MCP error text", async () => {
+    let error: string | undefined;
+    try {
+      formatToolResult({
+        isError: true,
+        content: [{ type: "text", text: "Could not process error-fixture" }],
+      });
+    } catch (err) {
+      if (!(err instanceof Error)) throw err;
+      error = err.message;
+    }
+    expect(error).toBe("Could not process error-fixture");
+
+    for (const path of ["cli", "daemon"] as const) {
+      auditToolCall({
+        path,
+        service: "vw",
+        tool: "cred",
+        resolvedTool: "get_credential",
+        durationMs: 12,
+        success: false,
+        error,
+      });
+    }
+    await flushAuditQueue();
+
+    const entries = await readAuditFile();
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) {
+      expect(entry.error).toMatch(/^\[REDACTED: \d+ chars\]$/);
+      expect(entry.responseSummary).toBeUndefined();
+      expect(entry.success).toBe(false);
+    }
   });
 
   test("handles circular references in result", async () => {

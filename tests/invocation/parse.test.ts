@@ -273,3 +273,66 @@ describe("parseToolCallArgs", () => {
     }
   });
 });
+
+describe("parseToolCallArgs --params - (stdin)", () => {
+  const stdin = (s: string) => ({ readStdin: () => s });
+  const SECRET = "s3cr3t-value-that-must-not-leak";
+
+  test("reads the JSON object from stdin with --params -", () => {
+    const result = parseToolCallArgs(
+      ["vw", "create_secret", "--params", "-"],
+      stdin(`{"name":"x","password":"${SECRET}"}\n`),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.params).toEqual({ name: "x", password: SECRET });
+  });
+
+  test("reads from stdin with --params=- and keeps other flags", () => {
+    const result = parseToolCallArgs(
+      ["vw", "create_secret", "--params=-", "--fields", "id"],
+      stdin('{"a":1}'),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.params).toEqual({ a: 1 });
+      expect(result.value.fields).toEqual(["id"]);
+    }
+  });
+
+  test("does not touch stdin unless asked", () => {
+    let read = false;
+    const result = parseToolCallArgs(["vw", "list", "--params", "{}"], {
+      readStdin: () => { read = true; return "{}"; },
+    });
+    expect(result.ok).toBe(true);
+    expect(read).toBe(false);
+  });
+
+  test("empty stdin is a validation error", () => {
+    const result = parseToolCallArgs(["vw", "t", "--params", "-"], stdin("  \n"));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INPUT_VALIDATION_ERROR");
+  });
+
+  test("invalid JSON on stdin never echoes the input", () => {
+    const result = parseToolCallArgs(["vw", "t", "--params", "-"], stdin(`{"password":${SECRET}`));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INPUT_VALIDATION_ERROR");
+      expect(JSON.stringify(result.error)).not.toContain(SECRET);
+    }
+  });
+
+  test("a non-object on stdin is rejected", () => {
+    const result = parseToolCallArgs(["vw", "t", "--params", "-"], stdin("[1,2]"));
+    expect(result.ok).toBe(false);
+  });
+
+  test("a stdin read failure is a validation error", () => {
+    const result = parseToolCallArgs(["vw", "t", "--params", "-"], {
+      readStdin: () => { throw new Error("EAGAIN"); },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("could not read stdin");
+  });
+});

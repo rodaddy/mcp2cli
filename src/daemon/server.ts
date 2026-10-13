@@ -352,6 +352,13 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             // error, so callers see one consistent shape regardless of which
             // layer noticed. MCP error -32001 is RequestTimeout.
             if (isRequestTimeoutError(err)) {
+              // rtech-infra#1956: drop the pooled connection so the next
+              // call reconnects instead of reusing a wedged session. Awaited
+              // so the key is gone before we reply; a close failure must not
+              // mask the timeout the caller receives.
+              await Promise.resolve()
+                .then(() => pool.closeService(poolKey))
+                .catch(() => {});
               throw new ToolError(
                 `Tool call timed out after ${timeout}ms`,
                 body.tool,

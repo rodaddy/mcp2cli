@@ -7,9 +7,7 @@ import {
 } from "../../invocation/index.ts";
 import { validationResultToCliError } from "../../validation/pipelines.ts";
 import { ConfigError, loadConfig } from "../../config/index.ts";
-import { connectToService } from "../../connection/index.ts";
-import { connectToHttpService } from "../../connection/http-transport.ts";
-import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
+import { connectToBackend } from "../../connection/connect.ts";
 import { callViaDaemon, getSchemaViaDaemon } from "../../process/index.ts";
 import { getToolSchemaCached, resolveToolNameCached } from "../../schema/cached.ts";
 import { auditToolCall, flushAuditQueue } from "../../logger/audit.ts";
@@ -236,11 +234,7 @@ export async function handleToolCall(args: string[]): Promise<void> {
 
   // 4. Connect to MCP server (stdio, http, or websocket)
   const directService = await resolveDirectServiceConfig(parsed.value.serviceName, service);
-  const connection = directService.backend === "http"
-    ? await connectToHttpService(directService)
-    : directService.backend === "websocket"
-      ? await connectToWebSocketService(directService)
-      : await connectToService(directService);
+  const connection = await connectToBackend(directService);
 
   const directStartTime = performance.now();
   let directSuccess = false;

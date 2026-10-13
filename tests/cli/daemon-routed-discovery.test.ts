@@ -1,11 +1,25 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
+import { resetConnector, setConnector } from "../../src/connection/connect.ts";
+import {
+  resetDaemonSchemaClient,
+  setDaemonSchemaClient,
+} from "../../src/cli/commands/daemon-schema-client.ts";
 import { join } from "node:path";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { readCacheRaw } from "../../src/cache/index.ts";
 
 const listToolsViaDaemon = mock(async () => ({
-  success: true,
+  success: true as const,
   result: [
     { name: "search_all", description: "Search Open Brain memory." },
     { name: "append_session_event", description: "Append a process event." },
@@ -14,7 +28,7 @@ const listToolsViaDaemon = mock(async () => ({
 
 const getSchemaViaDaemon = mock(
   async ({ tool }: { service: string; tool: string }) => ({
-    success: true,
+    success: true as const,
     result: {
       tool,
       description: `${tool} full description`,
@@ -29,28 +43,29 @@ const getSchemaViaDaemon = mock(
   }),
 );
 
-mock.module("../../src/cli/commands/daemon-schema-client.ts", () => ({
-  listToolsViaDaemon,
-  getSchemaViaDaemon,
-}));
+// Substituted through the seam, not through mock.module(). The registry patch
+// this replaced was process-global and outlived the file, which is the whole
+// mechanism behind #75. #86.
 
-mock.module("../../src/connection/http-transport.ts", () => ({
-  connectToHttpService: mock(async () => {
-    throw new Error("direct HTTP transport should not be used");
-  }),
-}));
+// These tests assert that discovery is routed through the daemon and never
+// opens a direct transport. That used to be enforced by mock.module()ing
+// src/connection/* -- which patches the process-global module registry, is
+// not undone by mock.restore(), and so leaked the stubs into every test file
+// that ran later in a single-process `bun test` (#75). setConnector() is the
+// same assertion through a seam this file can actually put back, in afterAll.
+beforeAll(() => {
+  setConnector(async (service) => {
+    throw new Error(
+      `direct ${service.backend} transport should not be used`,
+    );
+  });
+  setDaemonSchemaClient({ listToolsViaDaemon, getSchemaViaDaemon });
+});
 
-mock.module("../../src/connection/websocket-transport.ts", () => ({
-  connectToWebSocketService: mock(async () => {
-    throw new Error("direct websocket transport should not be used");
-  }),
-}));
-
-mock.module("../../src/connection/client.ts", () => ({
-  connectToService: mock(async () => {
-    throw new Error("direct stdio transport should not be used");
-  }),
-}));
+afterAll(() => {
+  resetConnector();
+  resetDaemonSchemaClient();
+});
 
 describe("daemon-routed schema discovery commands", () => {
   let testDir: string;
@@ -72,7 +87,7 @@ describe("daemon-routed schema discovery commands", () => {
         services: {
           "open-brain": {
             backend: "http",
-            url: "http://10.71.1.21:3100/mcp",
+            url: "http://10.0.1.21:3100/mcp",
             description: "Open Brain",
           },
         },

@@ -4,9 +4,7 @@
  * MEM-04: Bounded pool size (default 50, configurable via MCP2CLI_POOL_MAX).
  * MEM-05: Health check before reuse -- stale connections are replaced.
  */
-import { connectToService } from "../connection/index.ts";
-import { connectToHttpService } from "../connection/http-transport.ts";
-import { connectToWebSocketService } from "../connection/websocket-transport.ts";
+import { poolTransports } from "./transports.ts";
 import { ConnectionError } from "../connection/errors.ts";
 import type { McpConnection } from "../connection/types.ts";
 import type {
@@ -142,6 +140,18 @@ export class ConnectionPool {
         rawServiceConfig,
         this.secretResolver,
       );
+      // Backend dispatch, the pool's own. src/connection/connect.ts has a
+      // switch on the same three backends for the direct CLI path, and the two
+      // stay separate on purpose (#87, closed as intentional): these branches
+      // are not three ways to pick a transport, they are three different
+      // operations. HTTP and WebSocket each wrap the connect in circuit-breaker
+      // accounting and a stdio fallback; stdio has neither. Unifying them would
+      // mean a dispatch taking hooks for the breaker key, the fallback, and the
+      // logging -- more indirection than the duplication costs.
+      //
+      // The obligation that comes with that: ADDING A BACKEND MEANS EDITING
+      // BOTH. Both sites handle exactly the three literals in
+      // src/config/schema.ts and both throw `unsupported_backend` otherwise.
       let connection: McpConnection;
       if (serviceConfig.backend === "http") {
         connection = await this.connectHttpWithFallback(
@@ -156,7 +166,7 @@ export class ConnectionPool {
           serviceConfig,
         );
       } else if (serviceConfig.backend === "stdio") {
-        connection = await connectToService(serviceConfig);
+        connection = await poolTransports.connectToService(serviceConfig);
       } else {
         const backend = (serviceConfig as { backend: string }).backend;
         throw new ConnectionError(
@@ -324,7 +334,7 @@ export class ConnectionPool {
     }
 
     try {
-      const connection = await connectToWebSocketService(serviceConfig);
+      const connection = await poolTransports.connectToWebSocketService(serviceConfig);
       await recordSuccess(circuitKey);
       return connection;
     } catch (err) {
@@ -356,7 +366,7 @@ export class ConnectionPool {
       service: serviceName,
       command: fb.command,
     });
-    return connectToService({
+    return poolTransports.connectToService({
       backend: "stdio" as const,
       command: fb.command,
       args: fb.args ?? [],
@@ -398,7 +408,7 @@ export class ConnectionPool {
 
     // Attempt HTTP connection
     try {
-      const connection = await connectToHttpService(serviceConfig);
+      const connection = await poolTransports.connectToHttpService(serviceConfig);
       await recordSuccess(circuitKey);
       return connection;
     } catch (err) {
@@ -432,7 +442,7 @@ export class ConnectionPool {
       service: serviceName,
       command: fb.command,
     });
-    return connectToService({
+    return poolTransports.connectToService({
       backend: "stdio" as const,
       command: fb.command,
       args: fb.args ?? [],

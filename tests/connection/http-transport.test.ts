@@ -9,12 +9,12 @@ describe("HttpService config validation", () => {
   test("valid HTTP service with url only", () => {
     const result = HttpServiceSchema.safeParse({
       backend: "http",
-      url: "http://10.71.20.14:3001/mcp",
+      url: "http://vault.example.internal:3001/mcp",
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.backend).toBe("http");
-      expect(result.data.url).toBe("http://10.71.20.14:3001/mcp");
+      expect(result.data.url).toBe("http://vault.example.internal:3001/mcp");
       expect(result.data.headers).toEqual({});
     }
   });
@@ -111,7 +111,7 @@ describe("ServicesConfig with mixed backends", () => {
         },
         vault: {
           backend: "http",
-          url: "http://10.71.20.14:3001/mcp",
+          url: "http://vault.example.internal:3001/mcp",
           headers: { Authorization: "Bearer tok" },
         },
         homekit: {
@@ -127,7 +127,7 @@ describe("ServicesConfig with mixed backends", () => {
       expect(vault).toBeDefined();
       expect(vault!.backend).toBe("http");
       if (vault!.backend === "http") {
-        expect(vault!.url).toBe("http://10.71.20.14:3001/mcp");
+        expect(vault!.url).toBe("http://vault.example.internal:3001/mcp");
       }
     }
   });
@@ -137,7 +137,7 @@ describe("ServicesConfig with mixed backends", () => {
       services: {
         vault: {
           backend: "http",
-          url: "http://10.71.20.14:3001/mcp",
+          url: "http://vault.example.internal:3001/mcp",
         },
       },
     });
@@ -160,7 +160,7 @@ describe("Bootstrap converts HTTP entries", () => {
 
     const result = convertEntry("vault", {
       type: "http",
-      url: "http://10.71.20.14:3001/mcp",
+      url: "http://vault.example.internal:3001/mcp",
       headers: { Authorization: "Bearer tok" },
     });
 
@@ -168,7 +168,7 @@ describe("Bootstrap converts HTTP entries", () => {
     expect(result.config).toBeDefined();
     expect(result.config!.backend).toBe("http");
     if (result.config!.backend === "http") {
-      expect(result.config!.url).toBe("http://10.71.20.14:3001/mcp");
+      expect(result.config!.url).toBe("http://vault.example.internal:3001/mcp");
       expect(result.config!.headers).toEqual({ Authorization: "Bearer tok" });
     }
     expect(result.warning).toBeUndefined();

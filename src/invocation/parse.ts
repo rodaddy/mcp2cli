@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { ParseResult } from "./types.ts";
 import type { OutputFormat } from "../format/types.ts";
 import { isValidFormat } from "../format/types.ts";
@@ -9,6 +10,8 @@ import { isValidFormat } from "../format/types.ts";
  * Supports flag syntaxes:
  *   --params '{"key":"value"}'   (space-separated)
  *   --params='{"key":"value"}'   (equals-joined)
+ *   --params -  / --params=-     (read the JSON object from stdin, so a secret
+ *                                 value never appears in any process's argv)
  *   --dry-run                    (boolean flag)
  *   --fields 'id,name'           (space-separated)
  *   --fields='id,name'           (equals-joined)
@@ -17,7 +20,15 @@ import { isValidFormat } from "../format/types.ts";
  *
  * Returns a discriminated union -- callers check .ok before accessing .value or .error.
  */
-export function parseToolCallArgs(args: string[]): ParseResult {
+export interface ParseOptions {
+  /** Reads all of stdin. Injectable for tests; defaults to fd 0. */
+  readStdin?: () => string;
+}
+
+/** The --params value that means "read the JSON from stdin". */
+export const PARAMS_FROM_STDIN = "-";
+
+export function parseToolCallArgs(args: string[], options: ParseOptions = {}): ParseResult {
   const serviceName = args[0] as string | undefined;
   const toolName = args[1] as string | undefined;
 
@@ -122,6 +133,34 @@ export function parseToolCallArgs(args: string[]): ParseResult {
     };
   }
 
+  // --params - : the JSON comes from stdin. Errors below never echo the input,
+  // because stdin is the channel used for values that must not be shown.
+  const fromStdin = paramsJson === PARAMS_FROM_STDIN;
+  if (fromStdin) {
+    try {
+      paramsJson = (options.readStdin ?? (() => readFileSync(0, "utf8")))();
+    } catch {
+      return {
+        ok: false,
+        error: {
+          error: true,
+          code: "INPUT_VALIDATION_ERROR",
+          message: "--params -: could not read stdin",
+        },
+      };
+    }
+    if (paramsJson.trim() === "") {
+      return {
+        ok: false,
+        error: {
+          error: true,
+          code: "INPUT_VALIDATION_ERROR",
+          message: "--params -: stdin was empty; pipe a JSON object",
+        },
+      };
+    }
+  }
+
   // Parse JSON params
   try {
     const parsed: unknown = JSON.parse(paramsJson);
@@ -144,8 +183,10 @@ export function parseToolCallArgs(args: string[]): ParseResult {
       value: { serviceName, toolName, params, dryRun, fields, format },
     };
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Unknown parse error";
+    // JSON.parse messages can quote part of the input; never for stdin.
+    const message = fromStdin
+      ? "stdin is not valid JSON (input not shown)"
+      : err instanceof Error ? err.message : "Unknown parse error";
     return {
       ok: false,
       error: {

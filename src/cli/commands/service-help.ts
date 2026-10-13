@@ -3,9 +3,7 @@
  * Routes through daemon by default. Set MCP2CLI_NO_DAEMON=1 for direct connection.
  */
 import { ConfigError, loadConfig } from "../../config/index.ts";
-import { connectToService } from "../../connection/index.ts";
-import { connectToHttpService } from "../../connection/http-transport.ts";
-import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
+import { connectToBackend } from "../../connection/connect.ts";
 import { listToolsViaDaemon } from "../../process/index.ts";
 import { listToolsCached, formatToolListing } from "../../schema/index.ts";
 import type { ToolListing, ToolSummary } from "../../schema/index.ts";
@@ -102,11 +100,7 @@ export async function handleServiceHelp(
 
   // Connect and introspect (stdio, http, or websocket)
   const directService = await resolveDirectServiceConfig(serviceName, service);
-  const connection = directService.backend === "http"
-    ? await connectToHttpService(directService)
-    : directService.backend === "websocket"
-      ? await connectToWebSocketService(directService)
-      : await connectToService(directService);
+  const connection = await connectToBackend(directService);
 
   try {
     const allTools = await listToolsCached(connection.client, serviceName);

@@ -1,7 +1,5 @@
 import type { ServiceConfig } from "../../config/index.ts";
-import { connectToService } from "../../connection/client.ts";
-import { connectToHttpService } from "../../connection/http-transport.ts";
-import { connectToWebSocketService } from "../../connection/websocket-transport.ts";
+import { connectToBackend } from "../../connection/connect.ts";
 import { hashToolSchema } from "../../cache/index.ts";
 import type { CachedToolSchema } from "../../cache/index.ts";
 import { listAllTools } from "../../schema/introspect.ts";
@@ -69,12 +67,7 @@ async function discoverServiceSchemasDirect(
   service: ServiceConfig,
 ): Promise<ServiceDiscoveryResult> {
   const directService = await resolveDirectServiceConfig(serviceName, service);
-  const connection =
-    directService.backend === "http"
-      ? await connectToHttpService(directService)
-      : directService.backend === "websocket"
-        ? await connectToWebSocketService(directService)
-        : await connectToService(directService);
+  const connection = await connectToBackend(directService);
 
   try {
     const rawTools = await listAllTools(connection.client);

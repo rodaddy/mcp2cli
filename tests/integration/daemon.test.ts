@@ -7,6 +7,7 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolve } from "path";
+import { isPidAlive } from "../../src/process/liveness.ts";
 
 const PROJECT_ROOT = resolve(import.meta.dir, "../..");
 const MOCK_CONFIG = resolve(PROJECT_ROOT, "tests/fixtures/mock-tool-config.json");
@@ -72,15 +73,13 @@ async function readPid(): Promise<number | null> {
 }
 
 /**
- * Check if a process is alive.
+ * Check if a process is alive, using the same liveness rule the daemon
+ * client uses. Deliberately NOT a local `kill(pid, 0)` copy: an unreaped
+ * zombie answers signal 0 and the assertions below would pass against a
+ * daemon that never died (#75).
  */
 function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  return isPidAlive(pid);
 }
 
 // Setup/teardown for each test

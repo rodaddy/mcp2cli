@@ -1,4 +1,16 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import {
+  describe,
+  test,
+  expect,
+  beforeEach,
+  afterAll,
+  afterEach,
+  mock,
+} from "bun:test";
+import {
+  resetPoolTransports,
+  setPoolTransports,
+} from "../../src/daemon/transports.ts";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,20 +29,20 @@ const mockConnectToService = mock(async () => {
   return conn;
 });
 
-// Apply the mock to the connection module
-mock.module("../../src/connection/index.ts", () => ({
+// Substitute the pool's transports. This used to be three mock.module()
+// calls on src/connection/*, which patch the process-global module registry
+// and are not undone by mock.restore() -- the stubs leaked into every test
+// file that ran later in a single-process `bun test` (#75).
+setPoolTransports({
   connectToService: mockConnectToService,
-}));
-
-mock.module("../../src/connection/http-transport.ts", () => ({
   connectToHttpService: mockConnectToService,
-}));
-
-mock.module("../../src/connection/websocket-transport.ts", () => ({
   connectToWebSocketService: mockConnectToService,
-}));
+});
 
-// Import pool AFTER mocking
+afterAll(() => {
+  resetPoolTransports();
+});
+
 const { ConnectionPool } = await import("../../src/daemon/pool.ts");
 
 // -- Cache isolation: prevent tests from polluting real cache --

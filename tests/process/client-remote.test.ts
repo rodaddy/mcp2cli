@@ -190,7 +190,7 @@ describe("remote service discovery", () => {
     await expect(getRemoteServiceAvailability("yt-dlp")).resolves.toBe(
       "hosted",
     );
-    await expect(getRemoteServiceAvailability("king-secrets")).resolves.toBe(
+    await expect(getRemoteServiceAvailability("acme-secrets")).resolves.toBe(
       "not-hosted",
     );
   });

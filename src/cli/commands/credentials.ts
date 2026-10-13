@@ -23,7 +23,7 @@ import {
  *   mcp2cli credentials group remove <name>
  *   mcp2cli credentials group remove-members <name> <member1> [member2...]
  *   mcp2cli credentials reload
- *   mcp2cli credentials bootstrap-open-brain [--item "Open Brain - Per-User Tokens"] [--service open-brain] [--force]
+ *   mcp2cli credentials bootstrap-open-brain [--item "open-brain-user-tokens"] [--service open-brain] [--force]
  */
 export async function handleCredentials(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -290,7 +290,7 @@ function parseBootstrapOpenBrainFlags(
   args: string[],
 ): { item: string; service: string; force: boolean } | null {
   const options = {
-    item: "Open Brain - Per-User Tokens",
+    item: "open-brain-user-tokens",
     service: "open-brain",
     force: false,
   };
@@ -305,7 +305,7 @@ function parseBootstrapOpenBrainFlags(
       options.force = true;
     } else {
       console.log(
-        "Usage: mcp2cli credentials bootstrap-open-brain [--item 'Open Brain - Per-User Tokens'] [--service open-brain] [--force]",
+        "Usage: mcp2cli credentials bootstrap-open-brain [--item 'open-brain-user-tokens'] [--service open-brain] [--force]",
       );
       return null;
     }
