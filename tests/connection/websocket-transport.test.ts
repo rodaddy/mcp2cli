@@ -111,7 +111,7 @@ describe("ServicesConfig with websocket backend", () => {
         },
         vault: {
           backend: "http",
-          url: "http://10.71.20.14:3001/mcp",
+          url: "http://vault.example.internal:3001/mcp",
         },
         remote: {
           backend: "websocket",

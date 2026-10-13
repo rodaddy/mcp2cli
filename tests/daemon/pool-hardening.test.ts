@@ -1,4 +1,16 @@
-import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
+import {
+  describe,
+  test,
+  expect,
+  beforeEach,
+  mock,
+  afterAll,
+  afterEach,
+} from "bun:test";
+import {
+  resetPoolTransports,
+  setPoolTransports,
+} from "../../src/daemon/transports.ts";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,11 +44,15 @@ const mockConnectToService = mock(async () => {
   return createMockConnection(true);
 });
 
-mock.module("../../src/connection/index.ts", () => ({
-  connectToService: mockConnectToService,
-}));
+// Substitute the pool's transports rather than mock.module()ing
+// src/connection/*: module-registry patches are process-global and are not
+// undone by mock.restore(), so they leaked into later test files (#75).
+setPoolTransports({ connectToService: mockConnectToService });
 
-// Import pool AFTER mocking
+afterAll(() => {
+  resetPoolTransports();
+});
+
 const { ConnectionPool } = await import("../../src/daemon/pool.ts");
 
 function makeConfig(count: number): ServicesConfig {

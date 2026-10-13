@@ -212,3 +212,80 @@ describe("MEM-02: Tool call timeout", () => {
     expect(seen[0]?.resetTimeoutOnProgress).toBe(true);
   });
 });
+
+// rtech-infra#1956: a timed-out call must drop its pooled connection so the
+// next call reconnects instead of reusing a wedged session.
+describe("timeout drops the pooled connection", () => {
+  test("timed-out key is closed and the next call opens a new connection", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mcp2cli-timeout-close-"));
+    const live = new Map<string, number>();
+    let created = 0;
+    const closed: string[] = [];
+
+    const trackingPool = {
+      async getConnection(key: string) {
+        if (!live.has(key)) live.set(key, ++created);
+        const connId = live.get(key)!;
+        return {
+          client: {
+            async callTool(
+              request: { arguments?: { delay_ms?: number } },
+              _s?: unknown,
+              options?: { timeout?: number },
+            ) {
+              const delay = request.arguments?.delay_ms ?? 0;
+              const t = options?.timeout;
+              if (t !== undefined && delay > t) {
+                await new Promise((r) => setTimeout(r, t));
+                throw new FakeMcpTimeoutError(t);
+              }
+              return { content: [{ type: "text", text: JSON.stringify({ connId }) }] };
+            },
+          },
+        };
+      },
+      async closeService(key: string) {
+        closed.push(key);
+        live.delete(key);
+        throw new Error("close failed"); // must not mask the timeout
+      },
+      async closeAll() {},
+    } as unknown as ConnectionPool;
+
+    const s = createDaemonServer({
+      listenConfig: { mode: "unix", socketPath: join(dir, "d.sock") },
+      pool: trackingPool,
+      config: makeConfig(),
+      idleTimer: new IdleTimer(60_000, () => {}),
+      onShutdown: () => {},
+      authProvider: new TokenAuthProvider([]),
+      metrics: new MetricsCollector(),
+    });
+    const call = async (delay: number) =>
+      (await (
+        await s.fetch(
+          new Request("http://localhost/call", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ service: "slowTimeout", tool: "t", params: { delay_ms: delay } }),
+          }),
+        )
+      ).json()) as { success?: boolean; error?: { code?: string }; result?: { connId?: number } };
+
+    try {
+      const first = await call(2_000);
+      expect(first.success).toBe(false);
+      expect(first.error?.code).toBe("TOOL_TIMEOUT");
+      expect(closed).toEqual(["slowTimeout"]);
+      expect(live.has("slowTimeout")).toBe(false);
+
+      const second = await call(0);
+      expect(second.success).toBe(true);
+      expect(second.result?.connId).toBe(2);
+      expect(created).toBe(2);
+    } finally {
+      s.stop(true);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

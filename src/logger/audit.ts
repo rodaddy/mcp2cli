@@ -35,7 +35,7 @@ const MAX_SANITIZE_DEPTH = 10;
 const SENSITIVE_KEYS =
   "token|secret|password|api[_-]?key|auth[_-]|authorization|authentication|credential|bearer|private[_-]?key|access[_-]?key|session[_-]?id|cookie|signing[_-]?key|passphrase";
 
-/** Patterns that suggest sensitive content -- applied to KEYS only, never values */
+/** Patterns that suggest sensitive content -- applied to keys and call names, never values */
 const SENSITIVE_PATTERNS = new RegExp(`(?:${SENSITIVE_KEYS})`, "i");
 
 export interface AuditEntry {
@@ -138,6 +138,19 @@ function sanitizeResponseSummary(summary: string): string {
 }
 
 /**
+ * True when a call may carry secret values in params, responses or error text.
+ * Key-name redaction cannot catch these: vault tools return the value under neutral keys
+ * (`get_secret` -> `{"text": ...}`, `get_credential` -> `{"value": ...}`). Matches the
+ * service, tool or resolved tool name against SENSITIVE_PATTERNS, which covers
+ * `vaultwarden-secrets`, `get_secret*` and `get_credential` (SOF-2878).
+ */
+function isSensitiveCall(entry: AuditEntry): boolean {
+  return [entry.service, entry.tool, entry.resolvedTool].some(
+    (name) => name !== undefined && SENSITIVE_PATTERNS.test(name),
+  );
+}
+
+/**
  * Sanitize an error message string.
  * Redacts values following sensitive key patterns and truncates.
  */
@@ -233,13 +246,24 @@ export function writeAuditEntry(entry: AuditEntry): void {
 
       await rotateIfNeeded(filePath);
 
+      const sensitiveCall = isSensitiveCall(entry);
       const sanitizedEntry: AuditEntry = {
         ...entry,
-        params: entry.params ? sanitizeParams(entry.params) : undefined,
-        responseSummary: entry.responseSummary
-          ? sanitizeResponseSummary(entry.responseSummary)
-          : undefined,
-        error: entry.error ? sanitizeError(entry.error) : undefined,
+        params: !entry.params
+          ? undefined
+          : sensitiveCall
+            ? Object.fromEntries(Object.keys(entry.params).map((key) => [key, "[REDACTED]"]))
+            : sanitizeParams(entry.params),
+        responseSummary: !entry.responseSummary
+          ? undefined
+          : sensitiveCall
+            ? `[REDACTED: ${entry.responseSummary.length} chars]`
+            : sanitizeResponseSummary(entry.responseSummary),
+        error: !entry.error
+          ? undefined
+          : sensitiveCall
+            ? `[REDACTED: ${entry.error.length} chars]`
+            : sanitizeError(entry.error),
       };
 
       // M2: open with mode 0o600 creates file atomically with correct permissions (no TOCTOU).

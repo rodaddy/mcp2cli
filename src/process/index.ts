@@ -9,6 +9,7 @@ export {
 export {
   getDaemonStatus,
   isDaemonAlive,
+  isPidAlive,
   cleanStaleDaemon,
   checkRemoteHealth,
 } from "./liveness.ts";

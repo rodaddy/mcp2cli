@@ -1,0 +1,28 @@
+# Build-context exclusions for Containerfile.
+#
+# The context is a fresh clone made by the image-build rail's initContainer, so
+# this is not primarily about size -- it is about CORRECTNESS. Two entries are
+# load-bearing:
+#
+#   dist/          a stale binary from a developer's local `bun run build`
+#                  would be copied in and then overwritten by the build stage.
+#                  Harmless today, but it makes the image depend on the state
+#                  of whoever's checkout produced the context.
+#   node_modules/  a host-installed tree can carry platform-native binaries
+#                  built for macOS. `bun install --frozen-lockfile` runs in the
+#                  image and must be what populates this.
+#
+# The rest is noise that has no business in a build context.
+
+dist/
+node_modules/
+.git/
+.github/
+.forgejo/
+_archive/
+.qmd/
+*.log
+.DS_Store
+coverage/
+.env
+.env.*

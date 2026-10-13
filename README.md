@@ -6,11 +6,24 @@ CLI bridge that wraps MCP (Model Context Protocol) servers as bash-invokable com
 
 Inspired by [Google Workspace CLI](https://github.com/googleworkspace/cli), which wrapped Google's complex APIs into simple CLI commands -- all the functionality, none of the hassle. mcp2cli does the same for MCP servers.
 
+## Status
+
+- **Production use:** one operator's machines and home lab, every day, as the
+  way several coding agents (Claude Code, Codex, chat bots) reach their MCP
+  servers. Both the local CLI path and the network daemon run there. It has
+  not been run by other teams or at larger scale.
+- **What it does not do:** it is not an MCP server registry or marketplace, it
+  does not sandbox the servers it launches, and it does not manage secrets
+  itself (the `${secret:...}` references resolve through a Vaultwarden-backed
+  MCP service you run yourself).
+- Hostnames such as `*.example.internal` in examples and tests are
+  placeholders.
+
 ## Quick Start
 
 ```bash
 # Install
-git clone <repo-url>
+git clone https://github.com/rodaddy/mcp2cli.git
 cd mcp2cli
 bun install
 bun run build        # produces dist/mcp2cli
@@ -37,7 +50,7 @@ bun run dev -- n8n n8n_list_workflows --params '{}'
 **Prerequisites:** [Bun](https://bun.sh) v1.0+
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/rodaddy/mcp2cli.git
 cd mcp2cli
 bun install
 bun run build
@@ -127,6 +140,17 @@ mcp2cli <service> <tool> --params '<json>'
 ```
 
 The `--params` value must be valid JSON matching the tool's input schema.
+
+When a param is a secret, pass `--params -` and pipe the JSON on stdin, so
+the value never appears in any process's argv (visible to `ps` on a shared
+box). Build the JSON from stdin too, never with `jq --arg`:
+
+```bash
+printf '%s' "$VALUE" | jq -Rs '{name:"Example", password:.}' \
+  | mcp2cli vaultwarden-secrets create_secret --params -
+```
+
+Errors for `--params -` never echo the input.
 
 ### Inspect Tool Schema
 
@@ -443,7 +467,7 @@ mcp2cli credentials group remove ai_agents
 mcp2cli credentials reload
 
 # Populate Open Brain credentials from a Vaultwarden item
-mcp2cli credentials bootstrap-open-brain --item "Open Brain - Per-User Tokens"
+mcp2cli credentials bootstrap-open-brain --item "open-brain-user-tokens"
 ```
 
 ### Open Brain Example
@@ -486,7 +510,7 @@ Use `source: "remote"` when the CLI is routing through a hosted mcp2cli daemon. 
 
 Now when rico calls `mcp2cli open-brain search_all --params '{"query": "kubernetes"}'`, his personal key is injected. When skippy calls the same tool, the agents' shared key is used. Each gets their own connection in the pool.
 
-**Vaultwarden bootstrap** -- if the item `Open Brain - Per-User Tokens` has custom fields such as `AUTH_TOKEN_USER_RICO`, `AUTH_TOKEN_USER_SKIPPY`, and `AUTH_TOKEN_USER_BILBY`, run:
+**Vaultwarden bootstrap** -- if the item `open-brain-user-tokens` has custom fields such as `AUTH_TOKEN_USER_RICO`, `AUTH_TOKEN_USER_SKIPPY`, and `AUTH_TOKEN_USER_BILBY`, run:
 
 ```bash
 mcp2cli credentials bootstrap-open-brain
@@ -710,7 +734,7 @@ For Open Brain MCP changes, use the registry-backed path rather than directly
 refreshing a local daemon as the release proof:
 
 ```bash
-# First land any required registry/config/process update in rodaddy/rtech-mcps.
+# First land any required registry/config update in your service registry.
 # Then make mcp2cli pull the registry-backed service definition and refresh live schemas.
 mcp2cli cache diff open-brain
 mcp2cli cache warm open-brain
@@ -774,7 +798,7 @@ In addition to the [base environment variables](#environment-variables), network
 | `MCP2CLI_LISTEN_HOST` | (unset) | Bind address for TCP mode. Setting this enables TCP instead of Unix socket. Use `0.0.0.0` to listen on all interfaces |
 | `MCP2CLI_LISTEN_PORT` | `9500` | TCP port when `MCP2CLI_LISTEN_HOST` is set |
 | `MCP2CLI_AUTH_TOKEN` | (unset) | Bearer token for TCP authentication. Required for production deployments. Alias: `MCP_TOKEN` |
-| `MCP2CLI_REMOTE_URL` | (unset) | URL of remote mcp2cli daemon (e.g. `https://mcp2cli.rodaddy.live`). Enables remote client mode. Alias: `MCP_HOST` |
+| `MCP2CLI_REMOTE_URL` | (unset) | URL of remote mcp2cli daemon (e.g. `https://mcp2cli.example.internal`). Enables remote client mode. Alias: `MCP_HOST` |
 | `MCP2CLI_CONFIG` | `~/.config/mcp2cli/services.json` | Path to service definitions (useful for server-side config in `/etc/mcp2cli/`) |
 | `MCP2CLI_TOKENS_FILE` | `~/.config/mcp2cli/tokens.json` | Path to multi-user token/RBAC config |
 | `MCP2CLI_CREDENTIALS_FILE` | `~/.config/mcp2cli/credentials.json` | Path to per-identity credential mappings |

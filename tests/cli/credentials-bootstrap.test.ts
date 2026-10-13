@@ -5,7 +5,7 @@ describe("credentials bootstrap-open-brain", () => {
   test("summary omits bearer tokens", () => {
     const summary = formatOpenBrainBootstrapSummary(
       {
-        item: "Open Brain - Per-User Tokens",
+        item: "open-brain-user-tokens",
         service: "open-brain",
       },
       [

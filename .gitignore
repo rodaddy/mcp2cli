@@ -37,10 +37,18 @@ tokens.json
 .DS_Store
 
 # Claude Code and development planning
-.claude/
+.claude/*
+!.claude/agents/
+!.claude/agents/**
+!.claude/settings.json
 .omc/
 .planning/
 DESIGN.md
 
 # Added by ggshield
 .cache_ggshield
+
+
+# Retired: the librarian daemon owns indexing now; .qmd is obsolete
+# (Rico ruling 2026-08-31).
+.qmd/

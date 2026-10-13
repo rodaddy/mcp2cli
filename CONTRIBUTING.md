@@ -5,7 +5,7 @@ Thanks for your interest in contributing.
 ## Development Setup
 
 ```bash
-git clone https://github.com/yourusername/mcp2cli.git
+git clone https://github.com/rodaddy/mcp2cli.git
 cd mcp2cli
 bun install
 bun test
@@ -59,7 +59,7 @@ See the [README](README.md) for architecture overview. Key modules:
 
 ## Reporting Issues
 
-Open a GitHub issue with:
+Open an issue on GitHub (https://github.com/rodaddy/mcp2cli/issues) with:
 - What you expected
 - What happened
 - Steps to reproduce

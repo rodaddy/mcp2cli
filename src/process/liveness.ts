@@ -2,13 +2,60 @@
  * PID file and liveness detection for the daemon process.
  * Checks whether a daemon is running, stale, or stopped.
  */
+import { readFileSync } from "node:fs";
 import { readFile, unlink } from "node:fs/promises";
 import type { DaemonPaths } from "../daemon/types.ts";
 import type { DaemonStatus } from "./types.ts";
 
 /**
+ * Check whether a PID belongs to a process that is actually running.
+ *
+ * `kill(pid, 0)` alone is not enough on Linux: a child that has exited but
+ * has not been reaped still owns its PID as a zombie, and signal 0 succeeds
+ * against it. Wherever the parent is not reaping -- a container whose PID 1
+ * is `tail -f /dev/null`, which is exactly how act_runner starts a job
+ * container -- a stopped daemon reads as running forever, so it is never
+ * treated as stale and never cleaned up (Forge issue #75).
+ *
+ * `/proc/<pid>/stat` field 3 is the state character, and `Z` is zombie. It is
+ * read from the text after the LAST `)` because field 2 is the comm name in
+ * parentheses and may itself contain spaces or parentheses. Platforms without
+ * /proc have no zombie visibility, so the signal-0 answer stands.
+ */
+export function isPidAlive(pid: number): boolean {
+  try {
+    // signal 0 checks process existence without actually sending a signal
+    process.kill(pid, 0);
+  } catch (err) {
+    // EPERM means the process EXISTS but belongs to another user -- the
+    // signal was refused, not undeliverable. Reporting that as dead would
+    // let getDaemonStatus call it stale and unlink a live daemon's files.
+    // Only ESRCH ("no such process") actually proves it is gone.
+    if ((err as NodeJS.ErrnoException)?.code === "EPERM") return true;
+    return false;
+  }
+  // Only Linux has /proc. Elsewhere (macOS) there is no zombie visibility at
+  // all, so the signal-0 answer is the best available and ENOENT below would
+  // otherwise be misread as "reaped" for every live process.
+  if (process.platform !== "linux") return true;
+
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
+    const state = stat.slice(stat.lastIndexOf(")") + 1).trim().charAt(0);
+    return state !== "Z";
+  } catch (err) {
+    // ENOENT on Linux means the process was reaped between the kill and this
+    // read: genuinely gone, so reporting it alive would be backwards. Any
+    // other error (EACCES on a hardened /proc, a mount that is not there)
+    // leaves no better answer than the signal-0 result, which said alive.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+    return true;
+  }
+}
+
+/**
  * Check if a daemon process is alive by reading its PID file
- * and sending signal 0 to verify the process exists.
+ * and verifying the process exists and has not become a zombie.
  */
 export async function isDaemonAlive(pidFile: string): Promise<boolean> {
   try {
@@ -16,9 +63,7 @@ export async function isDaemonAlive(pidFile: string): Promise<boolean> {
     const pid = parseInt(content.trim(), 10);
     if (Number.isNaN(pid)) return false;
 
-    // signal 0 checks process existence without actually sending a signal
-    process.kill(pid, 0);
-    return true;
+    return isPidAlive(pid);
   } catch {
     return false;
   }
