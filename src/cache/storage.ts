@@ -214,7 +214,7 @@ export async function clearCache(service?: string): Promise<number> {
  *
  * A contract bump must invalidate all of these together -- otherwise the base
  * key looks refreshed while a user's credential-scoped read still serves the
- * old schema (the #58 failure). Credential keys encode the service name as the
+ * old schema (the stale-schema failure). Credential keys encode the service name as the
  * first element of the base64url-encoded `[service, userId]` tuple, so we decode
  * each and match. Returns the number of files removed.
  */
@@ -251,7 +251,7 @@ export async function clearServiceCacheKeys(service: string): Promise<number> {
     if (matches) {
       // Count only files actually removed. A swallowed unlink that still
       // incremented the count would report success while a stale credential
-      // entry survives -- silently re-opening the #58 staleness it exists to fix.
+      // entry survives -- silently re-opening the schema staleness it exists to fix.
       try {
         await unlink(join(cacheDir, entry));
         cleared++;
@@ -274,7 +274,7 @@ export async function clearServiceCacheKeys(service: string): Promise<number> {
 /**
  * Read just the schema fingerprint for a cached service key, ignoring TTL.
  * Returns undefined when there is no cache entry or it predates fingerprinting.
- * Used to stamp daemon responses for #58 client-side cache coherence.
+ * Used to stamp daemon responses for client-side cache coherence.
  */
 export async function readCacheFingerprint(
   service: string,

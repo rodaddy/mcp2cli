@@ -5,7 +5,7 @@
  * these two calls did it with `mock.module()`. That patches the process-global
  * module registry, is NOT undone by `mock.restore()`, and stays installed for
  * every test file that runs afterwards -- so the failures surface in unrelated
- * files (#75: one patch on src/daemon/pool.ts caused 50 of them). #86.
+ * files (one patch on src/daemon/pool.ts caused 50 of them).
  *
  * Same shape as `setConnector`/`resetConnector` in src/connection/connect.ts,
  * so there is one substitution pattern in this codebase rather than two.

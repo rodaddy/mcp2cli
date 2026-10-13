@@ -265,7 +265,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           // MEM-02: tool call timeout.
           // Priority: per-service config > MCP2CLI_TOOL_TIMEOUT env > default.
           //
-          // rtech-infra#418: this value MUST be handed to the SDK itself. The
+          // this value MUST be handed to the SDK itself. The
           // SDK applies DEFAULT_REQUEST_TIMEOUT_MSEC (60s) to every callTool
           // that receives no RequestOptions, so a purely local deadline (the
           // old Promise.race/AbortController) could never extend a call past
@@ -352,7 +352,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
             // error, so callers see one consistent shape regardless of which
             // layer noticed. MCP error -32001 is RequestTimeout.
             if (isRequestTimeoutError(err)) {
-              // rtech-infra#1956: drop the pooled connection so the next
+              // drop the pooled connection so the next
               // call reconnects instead of reusing a wedged session. Awaited
               // so the key is gone before we reply; a close failure must not
               // mask the timeout the caller receives.
@@ -466,7 +466,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
           const tools = body.fresh
             ? await listToolsForService(conn.client)
             : await listToolsCached(conn.client, listPoolKey);
-          // #58: stamp the BARE-service fingerprint (not the credential pool
+          // stamp the BARE-service fingerprint (not the credential pool
           // key). The drift-hook maintains the bare entry as the canonical,
           // credential-independent per-service signal, and the client also keys
           // its cache by bare service -- so both sides compare the same key.
@@ -516,7 +516,7 @@ export function createDaemonServer(opts: DaemonServerOptions) {
               404,
             );
           }
-          // #58: stamp the BARE-service fingerprint (see /list-tools).
+          // stamp the BARE-service fingerprint (see /list-tools).
           const schemaFingerprint = await readCacheFingerprint(body.service);
           return Response.json({ success: true, result, schemaFingerprint });
         } catch (err) {

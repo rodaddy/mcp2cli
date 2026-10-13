@@ -202,7 +202,7 @@ describe("clearCache", () => {
   });
 });
 
-// -- clearServiceCacheKeys (#58: invalidate base + all credential keys) --
+// -- clearServiceCacheKeys (invalidate base + all credential keys) --
 
 describe("clearServiceCacheKeys", () => {
   // Mirror the production key format: credential:<base64url([service, userId])>.

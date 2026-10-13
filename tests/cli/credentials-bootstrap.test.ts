@@ -5,7 +5,7 @@ describe("credentials bootstrap-open-brain", () => {
   test("summary omits bearer tokens", () => {
     const summary = formatOpenBrainBootstrapSummary(
       {
-        item: "open-brain-user-tokens",
+        item: "mcp2cli-user-tokens",
         service: "open-brain",
       },
       [

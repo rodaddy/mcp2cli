@@ -142,7 +142,7 @@ export class ConnectionPool {
       );
       // Backend dispatch, the pool's own. src/connection/connect.ts has a
       // switch on the same three backends for the direct CLI path, and the two
-      // stay separate on purpose (#87, closed as intentional): these branches
+      // stay separate on purpose : these branches
       // are not three ways to pick a transport, they are three different
       // operations. HTTP and WebSocket each wrap the connect in circuit-breaker
       // accounting and a stdio fallback; stdio has neither. Unifying them would

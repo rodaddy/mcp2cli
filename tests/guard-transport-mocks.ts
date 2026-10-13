@@ -27,12 +27,10 @@
  * The two are not redundant. They fail at different times:
  *
  *   static check -- BEFORE `bun test` runs, naming file and line. That is the
- *     property #75 needed: the original failure surfaced in unrelated files
+ *     property the original leak needed: the original failure surfaced in unrelated files
  *     and took a session to trace back to its cause.
  *   this guard -- DURING the run, at the offending call, in the file that
  *     made it. Later, but unbypassable.
- *
- * Keeping both is Rico's O1 from #90.
  *
  * WHY THE PATTERN IS DUPLICATED HERE
  *
@@ -87,7 +85,7 @@ const real = mock.module.bind(mock);
         `mock.module() on a transport module is process-global and is NOT\n` +
         `undone by mock.restore(), so it stays installed for every test file\n` +
         `that runs after this one -- and the failures surface THERE, not here\n` +
-        `(#75: 50 unrelated failures from one patch on src/daemon/pool.ts).\n` +
+        `(50 unrelated failures from one patch on src/daemon/pool.ts).\n` +
         `\n` +
         `Use the injectable seam instead. See tests/connection/ for the\n` +
         `pattern: substitute in beforeEach, restore in afterEach.`,

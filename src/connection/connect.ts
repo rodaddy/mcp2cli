@@ -10,7 +10,7 @@
  * does not undo a module replacement -- so every test file that ran afterwards
  * in a single-process `bun test` resolved the stub instead of the real
  * transport. Eight tests under tests/connection/ failed exactly that way, and
- * CI worked around it by running one bun process per test directory (#75).
+ * CI worked around it by running one bun process per test directory.
  *
  * The override below is that missing seam. Tests call `setConnector()` in a
  * scoped setup and restore it in teardown, which is ordinary state a test owns
@@ -37,7 +37,7 @@ export type Connector = (
  *
  * THE DAEMON POOL HAS ITS OWN DISPATCH, DELIBERATELY. `ConnectionPool.connect`
  * in src/daemon/pool.ts branches on the same three backends, and the two are
- * NOT going to be merged (#87, closed as intentional). This one picks a
+ * NOT going to be merged, by design. This one picks a
  * transport and nothing else. The pool's HTTP and WebSocket branches each run
  * a circuit breaker (shouldAttemptHttp / recordSuccess / recordFailure) and a
  * stdio fallback around the connect, while its stdio branch has neither -- so

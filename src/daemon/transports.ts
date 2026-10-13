@@ -7,7 +7,7 @@
  * tests still need to substitute them, and doing that with `mock.module()`
  * patches the process-global module registry with no way back -- `mock.restore()`
  * does not undo a module replacement -- which leaked stubs into every later
- * file in a single-process `bun test` (#75).
+ * file in a single-process `bun test`.
  *
  * So the pool dials through this object instead of importing the transports
  * directly. A test swaps the fields it needs and restores them in teardown;
@@ -40,7 +40,7 @@ export const poolTransports: PoolTransports = { ...defaults };
  *
  * Every caller must restore in `afterAll`. This is a module-level singleton:
  * unlike `mock.module()` there IS a way back, but nothing forces you to take
- * it, and a file that overrides without restoring reintroduces #75 in a
+ * it, and a file that overrides without restoring reintroduces the registry leak in a
  * quieter form.
  */
 export function setPoolTransports(

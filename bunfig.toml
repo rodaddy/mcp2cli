@@ -1,6 +1,6 @@
 # Loaded before every test file, in every `bun test` invocation -- CI, a bare
 # local run, and a single-file run alike. tests/guard-transport-mocks.ts
 # refuses a module-registry patch on a transport module at the moment of the
-# call, whatever spelling reached it (#90).
+# call, whatever spelling reached it.
 [test]
 preload = ["./tests/guard-transport-mocks.ts"]

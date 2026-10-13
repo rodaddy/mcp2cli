@@ -19,7 +19,7 @@ const log = createLogger("connection");
  *
  * ${secret:...} references in the service's `env` and `args` are resolved here,
  * before the child is spawned, so no stdio spawn path can leak a literal ref
- * into the child's environment (#65). Resolution is idempotent: an already
+ * into the child's environment. Resolution is idempotent: an already
  * resolved config has no remaining refs, so callers that resolve upstream
  * (the direct CLI path and the daemon pool) incur no extra secret lookups.
  */

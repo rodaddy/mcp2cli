@@ -54,7 +54,7 @@ export async function checkDriftOnConnect(
           changeCount: drift.changes.length,
         });
 
-        // #58: a contract change must invalidate EVERY cache key for this
+        // a contract change must invalidate EVERY cache key for this
         // service -- the bare entry AND all per-credential keys -- not just the
         // base entry rewritten below. Otherwise a user's credential-scoped read
         // keeps serving the old schema after the bump. Clear them all here; the

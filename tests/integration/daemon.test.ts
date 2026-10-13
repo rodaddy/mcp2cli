@@ -76,7 +76,7 @@ async function readPid(): Promise<number | null> {
  * Check if a process is alive, using the same liveness rule the daemon
  * client uses. Deliberately NOT a local `kill(pid, 0)` copy: an unreaped
  * zombie answers signal 0 and the assertions below would pass against a
- * daemon that never died (#75).
+ * daemon that never died.
  */
 function isProcessAlive(pid: number): boolean {
   return isPidAlive(pid);

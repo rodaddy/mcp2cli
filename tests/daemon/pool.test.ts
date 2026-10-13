@@ -32,7 +32,7 @@ const mockConnectToService = mock(async () => {
 // Substitute the pool's transports. This used to be three mock.module()
 // calls on src/connection/*, which patch the process-global module registry
 // and are not undone by mock.restore() -- the stubs leaked into every test
-// file that ran later in a single-process `bun test` (#75).
+// file that ran later in a single-process `bun test`.
 setPoolTransports({
   connectToService: mockConnectToService,
   connectToHttpService: mockConnectToService,

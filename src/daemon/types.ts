@@ -35,7 +35,7 @@ export interface DaemonCallResponse {
   success: true;
   result: unknown;
   /**
-   * #58 cache coherence: the daemon's current schema fingerprint for the
+   * cache coherence: the daemon's current schema fingerprint for the
    * service this response targeted. The client compares it against its own
    * cached fingerprint and drops its local cache on mismatch -- so a contract
    * bump that the daemon has already absorbed invalidates the client cache on

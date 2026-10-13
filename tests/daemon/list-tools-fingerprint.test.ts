@@ -1,5 +1,5 @@
 /**
- * #58 / PR #59 regression guard: the daemon must stamp the BARE-service schema
+ * Regression guard: the daemon must stamp the BARE-service schema
  * fingerprint onto /list-tools and /schema responses -- NOT the per-credential
  * pool-key fingerprint. The client compares against its bare-key fingerprint, so
  * stamping the credential key never converges and clears the client cache on
@@ -89,7 +89,7 @@ function cacheTool(name: string, hash: string) {
   return { name, description: `d-${name}`, inputSchema: {}, hash };
 }
 
-describe("#58 daemon stamps the bare-service fingerprint", () => {
+describe("daemon stamps the bare-service fingerprint", () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "mcp2cli-fp-"));
     cacheDir = await mkdtemp(join(tmpdir(), "mcp2cli-fp-cache-"));

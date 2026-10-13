@@ -15,7 +15,7 @@ import type { DaemonStatus } from "./types.ts";
  * against it. Wherever the parent is not reaping -- a container whose PID 1
  * is `tail -f /dev/null`, which is exactly how act_runner starts a job
  * container -- a stopped daemon reads as running forever, so it is never
- * treated as stale and never cleaned up (Forge issue #75).
+ * treated as stale and never cleaned up.
  *
  * `/proc/<pid>/stat` field 3 is the state character, and `Z` is zombie. It is
  * read from the text after the LAST `)` because field 2 is the comm name in
