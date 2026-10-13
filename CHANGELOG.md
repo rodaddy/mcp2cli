@@ -24,15 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2026-06-09
 
 ### Added
-- Downloadable service skill bundles with hash verification and path traversal protection (#25)
-- Health endpoint reports configured vs connected services (#24)
-- Structured audit logging for all MCP tool calls (#23)
-- Cross-service tool search with JSON output (#22)
-- Schema caching, drift detection, and auto-regen wiring (#21)
-- Auto-resolve service-prefixed tool names (#16)
-- Per-service timeout support in services.json (#15)
-- Web Management UI with RBAC Auth (#13)
-- HTTP/SSE transport for remote MCP servers (#1)
+- Downloadable service skill bundles with hash verification and path traversal protection
+- Health endpoint reports configured vs connected services
+- Structured audit logging for all MCP tool calls
+- Cross-service tool search with JSON output
+- Schema caching, drift detection, and auto-regen wiring
+- Auto-resolve service-prefixed tool names
+- Per-service timeout support in services.json
+- Web Management UI with RBAC Auth
+- HTTP/SSE transport for remote MCP servers
 
 ### Fixed
 - Allow tabs, newlines, and carriage returns in MCP tool parameters
@@ -40,8 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clean up stale socket/pid on daemon startup
 
 ### Infrastructure
-- CI and Claude Code Review workflows (#3)
-- ggshield cache added to gitignore (#14)
+- CI and Claude Code Review workflows
+- ggshield cache added to gitignore
 
 ## [0.2.0] - 2026-03-09
 
@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - CLI bridge for invoking MCP tools via bash
 - Service registry configuration (services.json)
-- Input validation with 48 adversarial test patterns
+- Input validation for tool names and parameter values
 - MCP stdio transport with stdout noise filtering
 - Tool invocation with structured JSON output
 - Schema introspection at every level (root, service, tool)

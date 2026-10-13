@@ -52,8 +52,8 @@ class FakeMcpTimeoutError extends Error {
 
 /**
  * Stands in for the SDK client. The deadline lives HERE, driven by the
- * RequestOptions the daemon passes in -- which is the contract under test
- * (rtech-infra#418). A fake that ignores the options argument would pass
+ * RequestOptions the daemon passes in -- which is the contract under test.
+ * A fake that ignores the options argument would pass
  * whether or not the daemon forwarded the timeout at all.
  */
 class FakePool {
@@ -147,7 +147,7 @@ describe("MEM-02: Tool call timeout", () => {
     expect(parsed.error?.message).toContain("500ms");
   });
 
-  // rtech-infra#418: the SDK applies DEFAULT_REQUEST_TIMEOUT_MSEC (60s) to any
+  // the SDK applies DEFAULT_REQUEST_TIMEOUT_MSEC (60s) to any
   // callTool that receives no RequestOptions, so a per-service timeout that is
   // never handed to the SDK is inert. Assert the options object directly --
   // an outer deadline in the daemon cannot substitute for it.
@@ -213,7 +213,7 @@ describe("MEM-02: Tool call timeout", () => {
   });
 });
 
-// rtech-infra#1956: a timed-out call must drop its pooled connection so the
+// a timed-out call must drop its pooled connection so the
 // next call reconnects instead of reusing a wedged session.
 describe("timeout drops the pooled connection", () => {
   test("timed-out key is closed and the next call opens a new connection", async () => {

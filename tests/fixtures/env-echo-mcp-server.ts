@@ -2,7 +2,7 @@
 /**
  * Mock MCP server that echoes back its own process environment and argv.
  * Used to prove that ${secret:...} refs in a stdio service's env/args are
- * resolved to their real values BEFORE the child is spawned (#65).
+ * resolved to their real values BEFORE the child is spawned.
  *
  * tools/call "echo_env" returns { env, argv } as JSON text content.
  */

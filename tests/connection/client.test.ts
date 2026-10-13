@@ -128,7 +128,7 @@ describe("connectToService", () => {
     }
   }, 15_000);
 
-  it("resolves ${secret:...} env refs before spawning the child (#65)", async () => {
+  it("resolves ${secret:...} env refs before spawning the child", async () => {
     const calls: string[] = [];
     const resolver: SecretResolver = {
       async resolve(ref: string): Promise<string> {
@@ -161,7 +161,7 @@ describe("connectToService", () => {
     expect(calls).toContain("RTech MCPs - foo#fields.N8N_API_URL");
   }, 15_000);
 
-  it("resolves ${secret:...} refs in args before spawning the child (#65)", async () => {
+  it("resolves ${secret:...} refs in args before spawning the child", async () => {
     const resolver: SecretResolver = {
       async resolve(): Promise<string> {
         return "arg-secret";

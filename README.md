@@ -2,7 +2,7 @@
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/rodaddy)
 
-CLI bridge that wraps MCP (Model Context Protocol) servers as bash-invokable commands. Instead of loading all MCP tool definitions into an LLM's system prompt (~13K+ tokens permanently), agents invoke tools via bash at zero context cost.
+CLI bridge that wraps MCP (Model Context Protocol) servers as bash-invokable commands. Instead of loading all MCP tool definitions into an LLM's system prompt (~13K+ tokens permanently), agents invoke tools via bash and pay context only for the one tool schema they look up when they need it.
 
 Inspired by [Google Workspace CLI](https://github.com/googleworkspace/cli), which wrapped Google's complex APIs into simple CLI commands -- all the functionality, none of the hassle. mcp2cli does the same for MCP servers.
 
@@ -27,6 +27,7 @@ git clone https://github.com/rodaddy/mcp2cli.git
 cd mcp2cli
 bun install
 bun run build        # produces dist/mcp2cli
+mkdir -p ~/.local/bin && ln -sf "$PWD/dist/mcp2cli" ~/.local/bin/mcp2cli   # put it on PATH (assumes ~/.local/bin is on PATH)
 
 # Bootstrap from existing Claude config
 mcp2cli bootstrap    # reads ~/.claude.json mcpServers -> ~/.config/mcp2cli/services.json
@@ -69,13 +70,7 @@ rm dist/mcp2cli
 cp /path/to/new/mcp2cli dist/mcp2cli
 ```
 
-If the local UI daemon is managed by launchd, restart it after replacing the binary:
-
-```bash
-launchctl kickstart -k gui/501/com.mcp2cli.local-ui
-```
-
-The already-running daemon keeps the old inode open until restart, so this is safe to do while the daemon is live.
+If a daemon is running, restart it after replacing the binary (for example with your service manager, such as `launchctl kickstart -k` on a launchd job you created). The already-running daemon keeps the old inode open until restart, so replacing the file is safe while the daemon is live.
 
 ## Configuration
 
@@ -182,7 +177,7 @@ Extracts only the specified fields from the response -- reduces output noise for
 mcp2cli generate-skills <service>
 ```
 
-Generates PAI skill files from MCP tool schemas, making tools discoverable by AI agents.
+Generates agent skill files from MCP tool schemas: a `SKILL.md` with YAML front matter and a routing index of tool groups, plus per-group `references/*.md` files with tool details, making tools discoverable by AI agents.
 
 ### Daemon Management
 
@@ -299,7 +294,7 @@ CLI Entry (src/cli/index.ts)
   |                                |     \-- MCP Transport (src/connection/transport.ts)
   |                                |-- Idle Timer (src/daemon/idle.ts)
   |                                \-- Health Endpoint (/health with memory stats)
-  |-- Input Validation (src/validation/) -- 48 adversarial patterns
+  |-- Input Validation (src/validation/) -- rejects unsafe identifiers and parameter strings
   |-- Schema Introspection (src/schema/)
   |-- Skill Generation (src/generation/)
   \-- Structured Logger (src/logger/) -- JSON on stderr
@@ -315,7 +310,7 @@ CLI Entry (src/cli/index.ts)
 
 **Semantic exit codes.** Different failure modes get different exit codes so callers can branch on the type of error without parsing output.
 
-**Input validation.** All tool parameters are validated against the MCP schema before the call is dispatched. The validation layer handles 48 adversarial patterns (injection attempts, type coercion, overflow) to fail fast with clear errors.
+**Input validation.** Before a call is dispatched, the service name, tool name, and every parameter key are checked as identifiers (non-empty, at most 10,000 characters, no control or invisible characters, no `..` path traversal, no path separators, no `?` or `#`), and every string parameter value is checked for length and control characters. Prototype-pollution keys (`__proto__`, `constructor`, `prototype`) and nesting deeper than 10 levels are rejected. A failure returns an `INPUT_VALIDATION_ERROR` with the reason. Type checking against the tool's schema is left to the MCP server.
 
 ## Agent Integration
 
@@ -344,16 +339,16 @@ mcp2cli supports multi-user RBAC via `~/.config/mcp2cli/tokens.json`. Each user 
 {
   "tokens": [
     {
-      "id": "rico",
+      "id": "alice",
       "token": "your-admin-token-here",
       "role": "admin",
       "description": "Full admin access",
-      "username": "rico",
+      "username": "alice",
       "password": "your-web-ui-password",
       "expiresAt": "2026-07-01T00:00:00.000Z"
     },
     {
-      "id": "skippy",
+      "id": "researcher",
       "token": "your-agent-token-here",
       "role": "agent",
       "description": "AI agent - tools + read, no config mutations",
@@ -394,7 +389,7 @@ The optional `expiresAt` field enables token expiry and refresh. Expired tokens 
 
 ## Per-Identity Credential Management
 
-Different users and agents can have their own API keys for backend services. When rico calls open-brain, he uses his key. When skippy calls it, the agents' shared key is used.
+Different users and agents can have their own API keys for backend services. When alice calls open-brain, she uses her key. When researcher calls it, the agents' shared key is used.
 
 ### credentials.json
 
@@ -403,11 +398,11 @@ Create `~/.config/mcp2cli/credentials.json`:
 ```json
 {
   "groups": {
-    "ai_agents": ["skippy", "bilby", "nagatha", "claude"]
+    "ai_agents": ["researcher", "builder", "ops-bot", "claude"]
   },
   "credentials": {
-    "rico": {
-      "open-brain": { "headers": { "Authorization": "Bearer ricos-ob-key" } }
+    "alice": {
+      "open-brain": { "headers": { "Authorization": "Bearer alices-ob-key" } }
     },
     "ai_agents": {
       "open-brain": { "headers": { "Authorization": "Bearer agents-shared-ob-key" } },
@@ -437,10 +432,10 @@ For identity-sensitive services, set `requiresCredentials: true` in `services.js
 
 ```bash
 # Set credentials for an identity on a service
-mcp2cli credentials set rico open-brain --header "Authorization: Bearer my-key"
+mcp2cli credentials set alice open-brain --header "Authorization: Bearer my-key"
 
 # Set env-based credentials (for stdio services)
-mcp2cli credentials set rico n8n --env "N8N_API_KEY=my-n8n-key"
+mcp2cli credentials set alice n8n --env "N8N_API_KEY=my-n8n-key"
 
 # Set a default credential (used when no user/group match)
 mcp2cli credentials set-default proxmox --header "Authorization: PVEAPIToken=shared"
@@ -449,17 +444,17 @@ mcp2cli credentials set-default proxmox --header "Authorization: PVEAPIToken=sha
 mcp2cli credentials list
 
 # Show effective credential source for a user
-mcp2cli credentials resolve skippy open-brain
+mcp2cli credentials resolve researcher open-brain
 # → {"exists": true, "source": "group"}
 
 # Group management
-mcp2cli credentials group add ai_agents skippy bilby nagatha
+mcp2cli credentials group add ai_agents researcher builder ops-bot
 mcp2cli credentials group add-members ai_agents claude
-mcp2cli credentials group remove-members ai_agents bilby
+mcp2cli credentials group remove-members ai_agents builder
 mcp2cli credentials group list
 
 # Remove credentials
-mcp2cli credentials remove rico open-brain
+mcp2cli credentials remove alice open-brain
 mcp2cli credentials remove-default proxmox
 mcp2cli credentials group remove ai_agents
 
@@ -467,7 +462,7 @@ mcp2cli credentials group remove ai_agents
 mcp2cli credentials reload
 
 # Populate Open Brain credentials from a Vaultwarden item
-mcp2cli credentials bootstrap-open-brain --item "open-brain-user-tokens"
+mcp2cli credentials bootstrap-open-brain --item "mcp2cli-user-tokens"
 ```
 
 ### Open Brain Example
@@ -495,11 +490,11 @@ Use `source: "remote"` when the CLI is routing through a hosted mcp2cli daemon. 
 ```json
 {
   "groups": {
-    "ai_agents": ["skippy", "bilby", "claude"]
+    "ai_agents": ["researcher", "builder", "claude"]
   },
   "credentials": {
-    "rico": {
-      "open-brain": { "headers": { "Authorization": "Bearer ricos-ob-api-key" } }
+    "alice": {
+      "open-brain": { "headers": { "Authorization": "Bearer alices-ob-api-key" } }
     },
     "ai_agents": {
       "open-brain": { "headers": { "Authorization": "Bearer agents-shared-ob-key" } }
@@ -508,15 +503,15 @@ Use `source: "remote"` when the CLI is routing through a hosted mcp2cli daemon. 
 }
 ```
 
-Now when rico calls `mcp2cli open-brain search_all --params '{"query": "kubernetes"}'`, his personal key is injected. When skippy calls the same tool, the agents' shared key is used. Each gets their own connection in the pool.
+Now when alice calls `mcp2cli open-brain search_all --params '{"query": "kubernetes"}'`, her personal key is injected. When researcher calls the same tool, the agents' shared key is used. Each gets their own connection in the pool.
 
-**Vaultwarden bootstrap** -- if the item `open-brain-user-tokens` has custom fields such as `AUTH_TOKEN_USER_RICO`, `AUTH_TOKEN_USER_SKIPPY`, and `AUTH_TOKEN_USER_BILBY`, run:
+**Vaultwarden bootstrap** -- if the item `mcp2cli-user-tokens` has custom fields such as `AUTH_TOKEN_USER_ALICE`, `AUTH_TOKEN_USER_RESEARCHER`, and `AUTH_TOKEN_USER_BUILDER`, run:
 
 ```bash
 mcp2cli credentials bootstrap-open-brain
 ```
 
-The field suffix is lowercased and used as the identity (`AUTH_TOKEN_USER_RICO` -> `rico`). Existing credentials are skipped unless `--force` is passed. The command prints counts and identity names only; it does not print bearer tokens.
+The field suffix is lowercased and used as the identity (`AUTH_TOKEN_USER_ALICE` -> `alice`). Existing credentials are skipped unless `--force` is passed. The command prints counts and identity names only; it does not print bearer tokens.
 
 ### Caller Identity Headers
 
@@ -538,16 +533,16 @@ Header and env values support `${caller.id}` and `${caller.role}` template varia
 }
 ```
 
-When bilby calls the service, the request headers become `X-Agent-Id: bilby` and `X-Role: agent`.
+When builder calls the service, the request headers become `X-Agent-Id: builder` and `X-Role: agent`.
 
 **In credentials.json** -- combine per-identity keys with identity headers:
 ```json
 {
   "credentials": {
-    "rico": {
+    "alice": {
       "open-brain": {
         "headers": {
-          "Authorization": "Bearer ricos-ob-key",
+          "Authorization": "Bearer alices-ob-key",
           "X-Namespace": "${caller.id}"
         }
       }

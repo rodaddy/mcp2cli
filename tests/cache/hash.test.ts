@@ -147,7 +147,7 @@ describe("hashToolSchema", () => {
   });
 });
 
-// -- fingerprintSchemas (#58 staleness signal) --
+// -- fingerprintSchemas (staleness signal) --
 
 describe("fingerprintSchemas", () => {
   test("returns a 64-character hex string", async () => {

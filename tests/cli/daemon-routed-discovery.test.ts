@@ -45,13 +45,13 @@ const getSchemaViaDaemon = mock(
 
 // Substituted through the seam, not through mock.module(). The registry patch
 // this replaced was process-global and outlived the file, which is the whole
-// mechanism behind #75. #86.
+// mechanism behind the cross-file test leak.
 
 // These tests assert that discovery is routed through the daemon and never
 // opens a direct transport. That used to be enforced by mock.module()ing
 // src/connection/* -- which patches the process-global module registry, is
 // not undone by mock.restore(), and so leaked the stubs into every test file
-// that ran later in a single-process `bun test` (#75). setConnector() is the
+// that ran later in a single-process `bun test`. setConnector() is the
 // same assertion through a seam this file can actually put back, in afterAll.
 beforeAll(() => {
   setConnector(async (service) => {

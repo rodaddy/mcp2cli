@@ -397,9 +397,9 @@ const PROBES: Probe[] = [
     files: { "fixtures/poison.test.ts": `import { mock } from "bun:test";\nmock.module("../../../src/daemon/pool.ts", () => ({}));\nthis is not valid typescript !!!\n` },
   },
 
-  // ---- the rule is unconditional: no allowlist at all (#86) ----
+  // ---- the rule is unconditional: no allowlist at all ----
   {
-    // daemon-schema-client was the ONE allowlisted target. #86 moved that call
+    // daemon-schema-client was the ONE allowlisted target. That call was moved
     // onto the setDaemonSchemaClient() seam and the exemption is gone, so this
     // module is now judged like any other: not protected, so not an offence.
     // The probe that used to live here asserted the opposite, and was correct
@@ -829,7 +829,7 @@ function checkGuardAgreement(): boolean {
     );
     return false;
   }
-  // Neither side has an allowlist any more: #86 moved the one exempt call onto
+  // Neither side has an allowlist any more: the one exempt call was moved onto
   // a seam, so the rule is unconditional. Asserted rather than assumed, because
   // an exemption reappearing in ONE of the two is exactly the drift this probe
   // exists to catch -- a hole in the guard, or a false failure from the check.

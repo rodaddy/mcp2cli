@@ -1,16 +1,16 @@
 /**
  * DONE-MEANS: no test patches the process-global module registry for the
  * transports. `mock.module()` replaces a module for the WHOLE bun process and
- * nothing puts it back -- measured during Forge issue #75, where capturing the
+ * nothing puts it back -- measured while diagnosing the module-registry leak, where capturing the
  * real modules and re-registering them in `afterAll` left the same 9 failures.
  * `mock.restore()` does not undo it either. A single new call silently
  * contaminates every test file that runs after it in CI's single-process run,
- * and the failure surfaces in an unrelated file, which is why #75 took a full
+ * and the failure surfaces in an unrelated file, which is why the original leak took a full
  * session to diagnose. The leak is FILE-ORDER dependent and the runner's order
  * is not alphabetical, so a developer reproducing locally can run the mocking
  * file after its victims and see green.
  *
- * PR #84 removed every such call and replaced it with seams a test can
+ * A refactor removed every such call and replaced it with seams a test can
  * restore. This check is what stops them coming back.
  *
  * The premise re-measured on bun 1.3.14, one `mock.module()` added to a single
@@ -46,8 +46,8 @@
  * function as an escape, and it was tried and reverted: it flags
  * `const spy = mock(() => 1)`, ordinary spy use, and broke the repo's own
  * baseline. A gate that fails correct code is worse than one with a stated
- * hole, because the cheapest fix becomes deleting the gate. Forge issue #90
- * carries the runtime preload guard, which blocks this and every other
+ * hole, because the cheapest fix becomes deleting the gate. The runtime
+ * preload guard (tests/guard-transport-mocks.ts) blocks this and every other
  * acquisition spelling by intercepting the call instead of reading the source
  * -- measured against all four bypasses this round found.
  *
@@ -144,7 +144,7 @@ const SPECIFIER_SUFFIXES = [
 const TEST_NAME = /[._](test|spec)\./i;
 
 // There is no allowlist. There was exactly one exempt call, in
-// tests/cli/daemon-routed-discovery.test.ts, and #86 moved it onto the
+// tests/cli/daemon-routed-discovery.test.ts, and it was moved onto the
 // setDaemonSchemaClient() seam. The rule is unconditional now: no file bun
 // loads may patch the registry for a protected module, with no exceptions to
 // keep current. If one is ever needed again, add it back with its own clause
@@ -1364,7 +1364,7 @@ function withLocalImports(
       // specifier that resolved to nothing was dropped in silence, on the
       // assumption that a non-file cannot hold a violation. Measured false:
       // exit 0 while `bun test` loaded the file and replaced the pool
-      // registry, the #75 failure exactly.
+      // registry, the original leak exactly.
       // "main" comes FIRST, not last. Node and bun consult it BEFORE
       // `<dir>/index.*`, so appending it left an index file shadowing the
       // real target: the check read the decoy, bun ran the poison.
@@ -1493,7 +1493,7 @@ function main(): number {
     console.log("  Use a restorable seam instead, and restore it in afterAll:");
     console.log("    src/connection/connect.ts  -> setConnector() / resetConnector()");
     console.log("    src/daemon/transports.ts   -> setPoolTransports() / resetPoolTransports()");
-    console.log("  Why: mock.module() is process-global and mock.restore() does NOT undo it (#75).");
+    console.log("  Why: mock.module() is process-global and mock.restore() does NOT undo it.");
     fail = 1;
   }
 
@@ -1513,7 +1513,7 @@ function main(): number {
   }
 
   // Clause 3 is GONE. It guarded one allowlisted call in
-  // tests/cli/daemon-routed-discovery.test.ts, and #86 converted that call
+  // tests/cli/daemon-routed-discovery.test.ts, and that call was converted
   // onto the setDaemonSchemaClient() seam. The rule is now unconditional:
   // there is no allowed mock.module() target anywhere in this repo, so an
   // exception to reason about no longer exists.
@@ -1541,8 +1541,8 @@ function main(): number {
   // Deliberately narrower than "the transports are only substituted through
   // seams". This is static analysis of a dynamic language: six review rounds
   // each found another spelling, and the honest claim is what was inspected,
-  // not what is guaranteed. Forge issue #90 tracks the runtime guard that can
-  // make the stronger claim.
+  // not what is guaranteed. The runtime preload guard
+  // (tests/guard-transport-mocks.ts) is what makes the stronger claim.
   console.log(`RESULT PASS -- no forbidden mock.module() found in ${files.length} reachable files`);
   return 0;
 }

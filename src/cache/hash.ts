@@ -55,7 +55,7 @@ export async function fingerprintSchemas(
  * writer passed `undefined`, "", or this placeholder -- otherwise the daemon
  * (which hashes `description ?? ""`) and the client warm path (which hashes the
  * already-defaulted "(no description)") would produce divergent fingerprints
- * for the same tool, clearing the cache on every read. See #58.
+ * for the same tool, clearing the cache on every read.
  */
 const MISSING_DESCRIPTION = "(no description)";
 

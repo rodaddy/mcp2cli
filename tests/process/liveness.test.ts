@@ -69,7 +69,7 @@ describe("isPidAlive", () => {
   });
 
   // The whole point of the helper: a process that exited but has not been
-  // reaped still answers signal 0 (#75). Only Linux exposes the zombie state
+  // reaped still answers signal 0. Only Linux exposes the zombie state
   // via /proc, so the assertion is only meaningful there.
   //
   // A zombie needs a parent that never wait()s. Neither bun nor the shell

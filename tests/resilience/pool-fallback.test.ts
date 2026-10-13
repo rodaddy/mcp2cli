@@ -42,7 +42,7 @@ const mockConnectToService = mock(async () => mockStdioConnection);
 
 // Substitute the pool's transports rather than mock.module()ing
 // src/connection/*: module-registry patches are process-global and are not
-// undone by mock.restore(), so they leaked into later test files (#75).
+// undone by mock.restore(), so they leaked into later test files.
 setPoolTransports({
   connectToService: mockConnectToService,
   connectToHttpService: mockConnectToHttpService,

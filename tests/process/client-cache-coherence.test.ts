@@ -12,7 +12,7 @@ import {
 import { reconcileClientCache } from "../../src/process/client.ts";
 import type { DaemonResponse } from "../../src/daemon/types.ts";
 
-// #58: when a daemon response carries a schemaFingerprint that differs from the
+// when a daemon response carries a schemaFingerprint that differs from the
 // client's locally-cached fingerprint, the client must drop its stale cache so
 // the next read refetches. These tests exercise reconcileClientCache directly,
 // independent of daemon routing/transport.
@@ -42,7 +42,7 @@ afterEach(async () => {
   await rm(testCacheDir, { recursive: true, force: true });
 });
 
-describe("reconcileClientCache (#58 piggyback)", () => {
+describe("reconcileClientCache (piggyback)", () => {
   test("drops the stale local cache when the daemon fingerprint differs", async () => {
     await writeCache("open-brain", [tool("old", "h1")], 60_000, "stale-fp");
     await reconcileClientCache("open-brain", okResponse(FRESH_FINGERPRINT));
@@ -84,7 +84,7 @@ describe("reconcileClientCache (#58 piggyback)", () => {
 // This is the regression guard for the swarm-found blockers (B1: key alignment,
 // B2: description-default divergence) -- both manifested as "fingerprints never
 // match -> reconcile clears on every call."
-describe("daemon/client fingerprint convergence (#58 blocker regression)", () => {
+describe("daemon/client fingerprint convergence (blocker regression)", () => {
   test("identical upstream tools -> identical fingerprint despite description defaulting + reconcile keeps cache", async () => {
     // Daemon side: raw MCP tools, one with NO description (undefined).
     const rawTools = [

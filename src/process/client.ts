@@ -34,7 +34,7 @@ const STARTUP_POLL_MS = 50;
 /**
  * CLI-side deadline for a single daemon request over the Unix socket.
  *
- * rtech-infra#418: this was a hard 60s constant with no override, so it capped
+ * This was once a hard 60s constant with no override, so it capped
  * every local call even when the daemon and the service were configured for a
  * far longer verb. Raising only the daemon-side deadline changes nothing while
  * this one still fires. Default stays 60s -- it is the interactive hang guard
@@ -549,7 +549,7 @@ export async function callViaDaemon(
 }
 
 /**
- * #58 client-side cache coherence: if the daemon stamped a schemaFingerprint
+ * client-side cache coherence: if the daemon stamped a schemaFingerprint
  * that differs from the client's locally-cached fingerprint for this service,
  * the client's cache is stale (the daemon already absorbed an upstream contract
  * bump). Drop the client's local entries so the next read refetches. Best-effort

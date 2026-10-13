@@ -49,6 +49,5 @@ DESIGN.md
 .cache_ggshield
 
 
-# Retired: the librarian daemon owns indexing now; .qmd is obsolete
-# (Rico ruling 2026-08-31).
+# Local search-index directory; never committed.
 .qmd/
