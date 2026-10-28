@@ -91,6 +91,15 @@ The full command, configuration, authentication and deployment reference is in
 [docs/REFERENCE.md](docs/REFERENCE.md). A systemd unit and environment template
 for the network daemon are in [`deploy/`](deploy/).
 
+## How it was built
+
+mcp2cli started on 2026-03-09 as a way to keep MCP tool definitions out of an
+agent's context, and grew over more than 60 commits into a pooled daemon with a network
+mode, per-identity credentials and audit logging. The build story covers the
+phases, the design decisions and why they were made, how AI models were used
+to write, review and test it, and what had to be redone:
+[docs/BUILD-STORY.md](docs/BUILD-STORY.md).
+
 ## Project status
 
 Active. It is used every day on its author's own machines as the way several
