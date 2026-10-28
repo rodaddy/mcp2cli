@@ -2,7 +2,12 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { writeAuditEntry, auditToolCall, flushAuditQueue, _resetAuditState } from "../../src/logger/audit.ts";
+import {
+  writeAuditEntry,
+  auditToolCall,
+  flushAuditQueue,
+  _resetAuditState,
+} from "../../src/logger/audit.ts";
 import type { AuditEntry } from "../../src/logger/audit.ts";
 import { formatToolResult } from "../../src/invocation/format.ts";
 
@@ -37,7 +42,11 @@ async function readAuditFile(): Promise<AuditEntry[]> {
   const file = Bun.file(filePath);
   if (!(await file.exists())) return [];
   const text = await file.text();
-  return text.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as AuditEntry);
+  return text
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as AuditEntry);
 }
 
 describe("writeAuditEntry", () => {
@@ -158,7 +167,11 @@ describe("writeAuditEntry", () => {
   });
 
   test("sanitizes response summary containing sensitive keys", async () => {
-    const summary = JSON.stringify({ data: "ok", api_key: "sk-secret-123", count: 5 });
+    const summary = JSON.stringify({
+      data: "ok",
+      api_key: "sk-secret-123",
+      count: 5,
+    });
     writeAuditEntry({
       timestamp: "2026-06-08T12:00:00Z",
       path: "daemon",
@@ -211,8 +224,12 @@ describe("writeAuditEntry", () => {
 
     const entries = await readAuditFile();
     // Values should NOT be redacted -- only keys are checked
-    expect(entries[0]!.params!.query).toBe("search for authentication tokens in the documentation");
-    expect(entries[0]!.params!.description).toBe("This is about password management");
+    expect(entries[0]!.params!.query).toBe(
+      "search for authentication tokens in the documentation",
+    );
+    expect(entries[0]!.params!.description).toBe(
+      "This is about password management",
+    );
   });
 
   test("handles expanded sensitive key patterns", async () => {
@@ -338,7 +355,7 @@ describe("auditToolCall", () => {
   test("includes resolvedTool and transport when provided", async () => {
     auditToolCall({
       path: "daemon",
-      userId: "skippy",
+      userId: "scout",
       role: "agent",
       service: "test-svc",
       tool: "short_name",
@@ -351,7 +368,7 @@ describe("auditToolCall", () => {
     await flushAuditQueue();
 
     const entries = await readAuditFile();
-    expect(entries[0]!.userId).toBe("skippy");
+    expect(entries[0]!.userId).toBe("scout");
     expect(entries[0]!.role).toBe("agent");
     expect(entries[0]!.resolvedTool).toBe("test-svc_short_name");
     expect(entries[0]!.transport).toBe("stdio");
@@ -373,9 +390,14 @@ describe("auditToolCall", () => {
 
     const entries = await readAuditFile();
     expect(entries).toHaveLength(1);
-    expect(entries[0]!.responseSummary).not.toContain("hunter2-plaintext-value");
+    expect(entries[0]!.responseSummary).not.toContain(
+      "hunter2-plaintext-value",
+    );
     expect(entries[0]!.responseSummary).toMatch(/^\[REDACTED: \d+ chars\]$/);
-    expect(entries[0]!.params).toEqual({ name: "[REDACTED]", field: "[REDACTED]" });
+    expect(entries[0]!.params).toEqual({
+      name: "[REDACTED]",
+      field: "[REDACTED]",
+    });
   });
 
   test("does not store the value returned by get_credential, by tool or resolved tool name", async () => {
@@ -402,7 +424,14 @@ describe("auditToolCall", () => {
       service: "vaultwarden-secrets",
       tool: "get_service",
       params: { name: "n8n" },
-      result: { content: [{ type: "text", text: '{"url":"https://n8n","key":"plain-key-value"}' }] },
+      result: {
+        content: [
+          {
+            type: "text",
+            text: '{"url":"https://n8n","key":"plain-key-value"}',
+          },
+        ],
+      },
       durationMs: 12,
       success: true,
     });
@@ -438,7 +467,11 @@ describe("auditToolCall", () => {
         path,
         service: "vaultwarden-secrets",
         tool: "set_secret",
-        params: { name: "fixture", value: "param-fixture", data: { text: "nested-fixture" } },
+        params: {
+          name: "fixture",
+          value: "param-fixture",
+          data: { text: "nested-fixture" },
+        },
         durationMs: 12,
         success: true,
       });
@@ -448,7 +481,11 @@ describe("auditToolCall", () => {
     const entries = await readAuditFile();
     expect(entries).toHaveLength(2);
     for (const entry of entries) {
-      expect(entry.params).toEqual({ name: "[REDACTED]", value: "[REDACTED]", data: "[REDACTED]" });
+      expect(entry.params).toEqual({
+        name: "[REDACTED]",
+        value: "[REDACTED]",
+        data: "[REDACTED]",
+      });
       expect(entry.success).toBe(true);
       expect(entry.durationMs).toBe(12);
     }

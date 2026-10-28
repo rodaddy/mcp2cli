@@ -218,8 +218,8 @@ describe("clearServiceCacheKeys", () => {
     await writeCache(credentialKey("open-brain", "user:rico"), [
       makeTool("rico"),
     ]);
-    await writeCache(credentialKey("open-brain", "user:skippy"), [
-      makeTool("skippy"),
+    await writeCache(credentialKey("open-brain", "user:scout"), [
+      makeTool("scout"),
     ]);
     // An unrelated service and its credential key must survive.
     await writeCache("n8n", [makeTool("n8n_base")]);
@@ -233,7 +233,7 @@ describe("clearServiceCacheKeys", () => {
       await readCacheRaw(credentialKey("open-brain", "user:rico")),
     ).toBeNull();
     expect(
-      await readCacheRaw(credentialKey("open-brain", "user:skippy")),
+      await readCacheRaw(credentialKey("open-brain", "user:scout")),
     ).toBeNull();
 
     // Unrelated service untouched.

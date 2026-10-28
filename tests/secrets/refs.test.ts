@@ -13,14 +13,18 @@ import { join, resolve } from "node:path";
 
 describe("secret refs", () => {
   test("detects nested secret refs", () => {
-    expect(hasSecretRefs({ headers: { Authorization: "Bearer ${secret:token}" } })).toBe(true);
-    expect(hasSecretRefs({ headers: { Authorization: "Bearer token" } })).toBe(false);
+    expect(
+      hasSecretRefs({ headers: { Authorization: "Bearer ${secret:token}" } }),
+    ).toBe(true);
+    expect(hasSecretRefs({ headers: { Authorization: "Bearer token" } })).toBe(
+      false,
+    );
   });
 
   test("resolves secret refs in service config without mutating original", async () => {
     const resolver: SecretResolver = {
       resolve: mock(async (ref: string) => {
-        if (ref === "open-brain#url") return "http://ct216.example/mcp";
+        if (ref === "open-brain#url") return "http://mcp-host.example/mcp";
         if (ref === "open-brain#token") return "resolved-token";
         throw new Error(`unexpected ref ${ref}`);
       }),
@@ -31,10 +35,14 @@ describe("secret refs", () => {
       headers: { Authorization: "Bearer ${secret:open-brain#token}" },
     } satisfies ServiceConfig;
 
-    const resolved = await resolveServiceSecretRefs("open-brain", service, resolver);
+    const resolved = await resolveServiceSecretRefs(
+      "open-brain",
+      service,
+      resolver,
+    );
     expect(resolved).toEqual({
       backend: "http",
-      url: "http://ct216.example/mcp",
+      url: "http://mcp-host.example/mcp",
       headers: { Authorization: "Bearer resolved-token" },
     });
     expect(service.url).toBe("${secret:open-brain#url}");
@@ -48,7 +56,9 @@ describe("secret refs", () => {
       args: ["${secret:}"],
       env: {},
     } satisfies ServiceConfig;
-    await expect(resolveServiceSecretRefs("bad", service, resolver)).rejects.toThrow(SecretResolutionError);
+    await expect(
+      resolveServiceSecretRefs("bad", service, resolver),
+    ).rejects.toThrow(SecretResolutionError);
   });
 
   test("resolves secret values containing replacement metacharacters literally", async () => {
@@ -62,7 +72,11 @@ describe("secret refs", () => {
       env: {},
     } satisfies ServiceConfig;
 
-    const resolved = await resolveServiceSecretRefs("literal", service, resolver);
+    const resolved = await resolveServiceSecretRefs(
+      "literal",
+      service,
+      resolver,
+    );
     expect(resolved.backend).toBe("stdio");
     if (resolved.backend === "stdio") {
       expect(resolved.args).toEqual(["value=$&-$1-$$"]);
@@ -105,9 +119,7 @@ describe("VaultwardenSecretResolver", () => {
       resolve(import.meta.dir, "../fixtures/mock-vaultwarden-command.ts"),
     ]);
     const resolver = new VaultwardenSecretResolver();
-    const value = await resolver.resolve(
-      `fixture#fields.token`,
-    );
+    const value = await resolver.resolve(`fixture#fields.token`);
     expect(value).toBe("fixture-token");
   });
 
@@ -130,7 +142,8 @@ describe("VaultwardenSecretResolver", () => {
       // instead of booting a daemon.
       expect(value).toBe("resolved-not-as-daemon");
     } finally {
-      if (originalDaemon !== undefined) process.env.MCP2CLI_DAEMON = originalDaemon;
+      if (originalDaemon !== undefined)
+        process.env.MCP2CLI_DAEMON = originalDaemon;
       else delete process.env.MCP2CLI_DAEMON;
     }
   });
@@ -144,7 +157,7 @@ describe("VaultwardenSecretResolver", () => {
         expect(url.pathname).toBe("/call");
         sawAuth = req.headers.get("Authorization") === "Bearer test-token";
 
-        const body = await req.json() as {
+        const body = (await req.json()) as {
           service?: string;
           tool?: string;
           params?: { query?: string };
@@ -167,7 +180,9 @@ describe("VaultwardenSecretResolver", () => {
       process.env.MCP2CLI_AUTH_TOKEN = "test-token";
       const resolver = new VaultwardenSecretResolver();
 
-      await expect(resolver.resolve("hosted#fields.token")).resolves.toBe("hosted-token");
+      await expect(resolver.resolve("hosted#fields.token")).resolves.toBe(
+        "hosted-token",
+      );
       expect(sawAuth).toBe(true);
     } finally {
       server.stop(true);
@@ -178,9 +193,12 @@ describe("VaultwardenSecretResolver", () => {
     let sawAuth = false;
     const tempDir = await mkdtemp(join(tmpdir(), "mcp2cli-refs-"));
     const tokensPath = join(tempDir, "tokens.json");
-    await writeFile(tokensPath, JSON.stringify({
-      tokens: [{ token: "file-token", role: "admin" }],
-    }));
+    await writeFile(
+      tokensPath,
+      JSON.stringify({
+        tokens: [{ token: "file-token", role: "admin" }],
+      }),
+    );
 
     const server = Bun.serve({
       port: 0,
@@ -201,7 +219,9 @@ describe("VaultwardenSecretResolver", () => {
       process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL = `http://127.0.0.1:${server.port}`;
       const resolver = new VaultwardenSecretResolver();
 
-      await expect(resolver.resolve("hosted#fields.token")).resolves.toBe("file-backed-token");
+      await expect(resolver.resolve("hosted#fields.token")).resolves.toBe(
+        "file-backed-token",
+      );
       expect(sawAuth).toBe(true);
     } finally {
       server.stop(true);
@@ -210,11 +230,14 @@ describe("VaultwardenSecretResolver", () => {
   });
 
   test("refuses to forward daemon auth to non-loopback remotes by default", async () => {
-    process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL = "https://vaultwarden.example.test";
+    process.env.MCP2CLI_VAULTWARDEN_REMOTE_URL =
+      "https://vaultwarden.example.test";
     process.env.MCP2CLI_AUTH_TOKEN = "test-token";
     const resolver = new VaultwardenSecretResolver();
 
-    await expect(resolver.resolve("hosted#fields.token")).rejects.toThrow(SecretResolutionError);
+    await expect(resolver.resolve("hosted#fields.token")).rejects.toThrow(
+      SecretResolutionError,
+    );
   });
 
   test("times out stalled Vaultwarden lookups", async () => {
@@ -225,6 +248,8 @@ describe("VaultwardenSecretResolver", () => {
     ]);
     process.env.MCP2CLI_VAULTWARDEN_TIMEOUT_MS = "25";
     const resolver = new VaultwardenSecretResolver();
-    await expect(resolver.resolve("slow")).rejects.toThrow(SecretResolutionError);
+    await expect(resolver.resolve("slow")).rejects.toThrow(
+      SecretResolutionError,
+    );
   });
 });

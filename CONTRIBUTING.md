@@ -43,7 +43,7 @@ Tests use Bun's built-in test runner. Mock MCP servers are in `tests/fixtures/`.
 
 ## Architecture
 
-See the [README](README.md) for architecture overview. Key modules:
+See the [README](README.md) and [docs/REFERENCE.md](docs/REFERENCE.md) for the architecture overview. Key modules:
 
 | Directory | Responsibility |
 |-----------|---------------|

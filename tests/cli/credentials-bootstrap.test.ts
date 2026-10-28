@@ -19,25 +19,25 @@ describe("credentials bootstrap-open-brain", () => {
           },
         },
         {
-          identity: "skippy",
+          identity: "scout",
           service: "open-brain",
           credential: {
             headers: {
-              Authorization: "Bearer skippy-secret-token",
+              Authorization: "Bearer scout-secret-token",
             },
           },
         },
       ],
-      ["skippy"],
+      ["scout"],
       ["rico"],
     );
 
     const output = JSON.stringify(summary);
-    expect(output).toContain('"changed":["skippy"]');
+    expect(output).toContain('"changed":["scout"]');
     expect(output).toContain('"skipped":["rico"]');
-    expect(output).toContain('"discovered":["rico","skippy"]');
+    expect(output).toContain('"discovered":["rico","scout"]');
     expect(output).not.toContain("rico-secret-token");
-    expect(output).not.toContain("skippy-secret-token");
+    expect(output).not.toContain("scout-secret-token");
     expect(output).not.toContain("Bearer");
   });
 });

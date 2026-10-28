@@ -1,933 +1,114 @@
 # mcp2cli
 
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/rodaddy)
+Call any MCP server's tools from bash, so an AI agent loads a tool's schema only when it needs that tool.
 
-CLI bridge that wraps MCP (Model Context Protocol) servers as bash-invokable commands. Instead of loading all MCP tool definitions into an LLM's system prompt (~13K+ tokens permanently), agents invoke tools via bash and pay context only for the one tool schema they look up when they need it.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![TypeScript](https://img.shields.io/badge/language-TypeScript-3178c6.svg)
+![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-black.svg)
 
-Inspired by [Google Workspace CLI](https://github.com/googleworkspace/cli), which wrapped Google's complex APIs into simple CLI commands -- all the functionality, none of the hassle. mcp2cli does the same for MCP servers.
+![mcp2cli: AI agents call MCP tools from bash](docs/images/hero.jpg)
 
-## Status
+## What it is
 
-- **Production use:** one operator's machines and home lab, every day, as the
-  way several coding agents (Claude Code, Codex, chat bots) reach their MCP
-  servers. Both the local CLI path and the network daemon run there. It has
-  not been run by other teams or at larger scale.
-- **What it does not do:** it is not an MCP server registry or marketplace, it
-  does not sandbox the servers it launches, and it does not manage secrets
-  itself (the `${secret:...}` references resolve through a Vaultwarden-backed
-  MCP service you run yourself).
-- Hostnames such as `*.example.internal` in examples and tests are
-  placeholders.
-
-## Quick Start
+mcp2cli is a command-line bridge for the Model Context Protocol (MCP). It reads
+a `services.json` of MCP servers (stdio, HTTP or WebSocket) and exposes every
+tool as a shell command:
 
 ```bash
-# Install
+mcp2cli <service> <tool> --params '{"key": "value"}'
+```
+
+Output on stdout is always JSON, errors carry semantic exit codes, and a
+background daemon keeps server connections warm between calls.
+
+![mcp2cli listing a fixture MCP server's tools, reading one tool's schema, and calling a tool](docs/images/terminal.png)
+
+*Real output: mcp2cli run against the mock MCP server in `tests/fixtures/mock-mcp-server.ts`.*
+
+## Why it exists
+
+An agent harness that registers MCP servers directly puts every tool definition
+from every server into the model's context on every turn, whether or not the
+tools are used. With several servers that is a large, permanent cost in
+context window. mcp2cli moves the tools behind a bash command: the agent lists
+services, reads the one schema it needs with `mcp2cli schema`, and calls the
+tool. The idea follows [Google Workspace CLI](https://github.com/googleworkspace/cli),
+which wrapped large APIs as plain commands.
+
+## How it works
+
+![How mcp2cli works](docs/images/how-it-works.jpg)
+
+The CLI (`src/cli`) validates the service name, tool name and parameters
+(`src/validation`) before anything is dispatched, and serves schemas from a
+local cache (`src/cache`) when they are fresh. Tool calls go through the daemon
+client (`src/process/client.ts`) to a local daemon over a Unix socket, or to a
+shared network daemon over HTTP when `MCP2CLI_REMOTE_URL` is set. The daemon
+(`src/daemon/server.ts`) authenticates the caller, applies per-identity
+credentials, and takes a connection from a pool (`src/daemon/pool.ts`) guarded
+by a circuit breaker. It exits after an idle timeout, and in network mode it
+exposes `/health`, Prometheus `/metrics` and an audit log.
+
+## Features
+
+- One command shape for every MCP tool: `mcp2cli <service> <tool> --params '{...}'`.
+- `mcp2cli schema <service>.<tool>` returns one tool's input schema on demand.
+- stdio, HTTP and WebSocket MCP backends; `mcp2cli bootstrap` imports the
+  `mcpServers` block from `~/.claude.json`.
+- Persistent daemon with a connection pool, health checks, idle exit and a
+  circuit breaker per service.
+- Network mode: one daemon serves many machines, with bearer tokens, RBAC
+  roles, per-identity and per-group credentials, and Prometheus metrics.
+- Input validation against path traversal, control characters, prototype
+  pollution and deep nesting.
+- Schema cache with drift detection, cross-service tool search, batch calls
+  from NDJSON, `--dry-run`, field filtering, and `--format` json, table, yaml,
+  csv or ndjson.
+- `generate-skills` writes agent skill files from live tool schemas.
+
+## Quick start
+
+Requires [Bun](https://bun.sh) 1.0 or later.
+
+```bash
 git clone https://github.com/rodaddy/mcp2cli.git
 cd mcp2cli
 bun install
-bun run build        # produces dist/mcp2cli
-mkdir -p ~/.local/bin && ln -sf "$PWD/dist/mcp2cli" ~/.local/bin/mcp2cli   # put it on PATH (assumes ~/.local/bin is on PATH)
+bun run build                      # produces dist/mcp2cli
+ln -sf "$PWD/dist/mcp2cli" ~/.local/bin/mcp2cli
 
-# Bootstrap from existing Claude config
-mcp2cli bootstrap    # reads ~/.claude.json mcpServers -> ~/.config/mcp2cli/services.json
-
-# Use it
-mcp2cli services                                    # list available services
-mcp2cli n8n --help                                   # list tools for a service
-mcp2cli n8n n8n_list_workflows --params '{}'         # invoke a tool
-mcp2cli schema n8n.n8n_list_workflows                # inspect tool schema
+mcp2cli bootstrap                  # import MCP servers from ~/.claude.json
+mcp2cli services                   # list configured services
+mcp2cli <service> --help           # list a service's tools
+mcp2cli schema <service>.<tool>    # read one tool's schema
+mcp2cli <service> <tool> --params '{}'
 ```
 
-For development without building:
+Run from source without building: `bun run dev -- services`.
+Run the tests: `bun test`.
 
-```bash
-bun run dev -- services
-bun run dev -- n8n n8n_list_workflows --params '{}'
-```
+The full command, configuration, authentication and deployment reference is in
+[docs/REFERENCE.md](docs/REFERENCE.md). A systemd unit and environment template
+for the network daemon are in [`deploy/`](deploy/).
 
-## Installation
+## Project status
 
-**Prerequisites:** [Bun](https://bun.sh) v1.0+
+Active. It is used every day on its author's own machines as the way several
+coding agents (Claude Code, Codex, chat bots) reach their MCP servers, through
+both the local CLI path and the network daemon. It has not been run by other
+teams or at larger scale. It is not an MCP registry, it does not sandbox the
+servers it launches, and `${secret:...}` references resolve through a
+Vaultwarden-backed service you run yourself.
 
-```bash
-git clone https://github.com/rodaddy/mcp2cli.git
-cd mcp2cli
-bun install
-bun run build
-```
+## Licence
 
-The compiled binary lands at `dist/mcp2cli`. Add it to your PATH or symlink it.
+MIT. See [LICENSE](LICENSE).
 
-### macOS Binary Upgrades
+## Credits
 
-On macOS, do not overwrite an existing compiled binary in place with `cp new dist/mcp2cli`. Replacing the contents of the same inode can invalidate the ad-hoc code signature and cause the next exec to be killed with `SIGKILL` / exit code 137.
+- [Model Context Protocol TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+- [Google Workspace CLI](https://github.com/googleworkspace/cli), the model for the command shape.
 
-Use a fresh inode instead:
+## Author
 
-```bash
-rm dist/mcp2cli
-cp /path/to/new/mcp2cli dist/mcp2cli
-```
-
-If a daemon is running, restart it after replacing the binary (for example with your service manager, such as `launchctl kickstart -k` on a launchd job you created). The already-running daemon keeps the old inode open until restart, so replacing the file is safe while the daemon is live.
-
-## Configuration
-
-### Service Registry
-
-mcp2cli discovers MCP servers from `~/.config/mcp2cli/services.json`:
-
-```json
-{
-  "services": {
-    "n8n": {
-      "description": "n8n workflow automation",
-      "backend": "stdio",
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/n8n-mcp"],
-      "env": {
-        "N8N_BASE_URL": "https://n8n.example.com",
-        "N8N_API_KEY": "your-api-key"
-      }
-    },
-    "homekit": {
-      "description": "HomeKit smart home control",
-      "backend": "stdio",
-      "command": "node",
-      "args": ["/path/to/homekit-mcp/dist/index.js"],
-      "env": {}
-    }
-  }
-}
-```
-
-Each service entry mirrors the Claude Desktop `mcpServers` format -- same `command`, `args`, and `env` fields.
-
-### Bootstrap from Claude Config
-
-If you already have MCP servers configured in `~/.claude.json`:
-
-```bash
-mcp2cli bootstrap
-```
-
-This reads your `mcpServers` entries and generates `services.json` automatically.
-
-## Commands
-
-### List Services
-
-```bash
-mcp2cli services
-```
-
-### List Tools for a Service
-
-```bash
-mcp2cli <service> --help
-```
-
-### Invoke a Tool
-
-```bash
-mcp2cli <service> <tool> --params '<json>'
-```
-
-The `--params` value must be valid JSON matching the tool's input schema.
-
-When a param is a secret, pass `--params -` and pipe the JSON on stdin, so
-the value never appears in any process's argv (visible to `ps` on a shared
-box). Build the JSON from stdin too, never with `jq --arg`:
-
-```bash
-printf '%s' "$VALUE" | jq -Rs '{name:"Example", password:.}' \
-  | mcp2cli vaultwarden-secrets create_secret --params -
-```
-
-Errors for `--params -` never echo the input.
-
-### Inspect Tool Schema
-
-```bash
-mcp2cli schema <service>.<tool>
-```
-
-Returns the JSON Schema for the tool's input parameters -- useful for discovering required fields.
-
-### Dry Run
-
-```bash
-mcp2cli <service> <tool> --params '{"query": "test"}' --dry-run
-```
-
-Validates input and shows what would be sent without executing the tool call.
-
-### Field Filtering
-
-```bash
-mcp2cli <service> <tool> --params '{}' --fields "id,name,status"
-```
-
-Extracts only the specified fields from the response -- reduces output noise for scripting.
-
-### Generate Skill Files
-
-```bash
-mcp2cli generate-skills <service>
-```
-
-Generates agent skill files from MCP tool schemas: a `SKILL.md` with YAML front matter and a routing index of tool groups, plus per-group `references/*.md` files with tool details, making tools discoverable by AI agents.
-
-### Daemon Management
-
-```bash
-mcp2cli daemon status    # check if daemon is running, connection pool stats
-mcp2cli daemon stop      # graceful shutdown
-```
-
-## Output Format
-
-All responses are structured JSON on stdout. Logs go to stderr.
-
-```json
-// Success
-{ "success": true, "result": { "workflows": [...] } }
-
-// Error
-{ "error": true, "code": "TOOL_ERROR", "message": "Workflow not found", "reason": "..." }
-```
-
-This makes mcp2cli composable with `jq`, pipes, and scripting:
-
-```bash
-# Get workflow names
-mcp2cli n8n n8n_list_workflows --params '{}' | jq '.result.workflows[].name'
-
-# Check for errors
-mcp2cli n8n n8n_get_workflow --params '{"id": "123"}' | jq 'if .error then .message else .result end'
-```
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Validation error (bad input, schema mismatch) |
-| 2 | Auth error (missing credentials, permission denied) |
-| 3 | Tool error (MCP tool returned an error) |
-| 4 | Connection error (daemon unreachable, transport failure) |
-| 5 | Internal error |
-
-Use exit codes for scripting:
-
-```bash
-mcp2cli n8n n8n_get_workflow --params '{"id": "123"}' 2>/dev/null
-if [ $? -eq 4 ]; then
-  echo "Connection failed -- is the MCP server configured?"
-fi
-```
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP2CLI_LOG_LEVEL` | `silent` | Log verbosity: `silent`, `error`, `warn`, `info`, `debug` |
-| `MCP2CLI_IDLE_TIMEOUT` | `60` | Daemon idle timeout in seconds |
-| `MCP2CLI_STARTUP_TIMEOUT` | `10000` | CLI wait time for daemon startup readiness in milliseconds |
-| `MCP2CLI_TOOL_TIMEOUT` | `60000` | Tool call timeout in milliseconds. A per-service `timeout` in `services.json` overrides it, and the resolved value is passed to the MCP SDK, so it bounds the call for real |
-| `MCP2CLI_REQUEST_TIMEOUT_MS` | `60000` | CLI request timeout for local Unix-socket daemon calls in milliseconds. Raise it alongside a long per-service `timeout`, otherwise the CLI gives up before the verb finishes |
-| `MCP2CLI_REMOTE_REQUEST_TIMEOUT_MS` | `60000` | CLI HTTP request timeout for explicit remote daemon calls in milliseconds |
-| `MCP2CLI_REMOTE_RETRIES` | `3` | Remote request attempts for explicit remote daemon calls |
-| `MCP2CLI_REMOTE_FALLBACK_TIMEOUT_MS` | `10000` | CLI HTTP timeout for each `remote-local` probe before falling back to the local daemon |
-| `MCP2CLI_REMOTE_FALLBACK_RETRIES` | `1` | Remote probe attempts before `remote-local` calls fall back to the local daemon |
-| `MCP2CLI_POOL_MAX` | `50` | Max concurrent MCP connections in the pool |
-| `MCP2CLI_LOG_DIR` | `~/.cache/mcp2cli/logs` | Directory for stderr capture logs |
-| `MCP2CLI_NO_DAEMON` | (unset) | If set, bypass the daemon and connect directly |
-| `MCP2CLI_DEBUG` | (unset) | If `1`, print discarded stdout lines from MCP servers |
-
-Example:
-
-```bash
-MCP2CLI_LOG_LEVEL=debug mcp2cli n8n n8n_list_workflows --params '{}'
-MCP2CLI_NO_DAEMON=1 mcp2cli n8n n8n_list_workflows --params '{}'
-```
-
-### Tool calls longer than 60 seconds
-
-A slow verb passes through **two independent deadlines**, and raising only one
-changes nothing — the other still fires first:
-
-1. **Daemon → MCP server.** The per-service `timeout` in `services.json`
-   (falling back to `MCP2CLI_TOOL_TIMEOUT`, default 60s) is handed to the MCP
-   SDK on every tool call. Without it the SDK applies its own
-   `DEFAULT_REQUEST_TIMEOUT_MSEC` of 60s and fails with
-   `MCP error -32001: Request timed out`.
-2. **CLI → daemon.** `MCP2CLI_REQUEST_TIMEOUT_MS` (default 60s) bounds the
-   local Unix-socket request. When it fires the CLI reports
-   `CONNECTION_ERROR: The operation timed out.` even though the daemon and the
-   MCP server are still working.
-
-So a verb that can run for 20 minutes needs both:
-
-```jsonc
-// services.json
-{ "services": { "runner-boxes": { "timeout": 1200000 /* ...*/ } } }
-```
-
-```bash
-MCP2CLI_REQUEST_TIMEOUT_MS=1200000 mcp2cli runner-boxes runner_done --params '{}'
-```
-
-A timed-out call is **not** a failed verb: the server-side work may well have
-completed after the client stopped waiting. Do not blind-retry a
-non-idempotent verb on a timeout.
-
-## Architecture
-
-```
-CLI Entry (src/cli/index.ts)
-  |-- Command Dispatch (services, schema, bootstrap, generate-skills, daemon)
-  |-- Tool Call Handler -> Daemon Client (Unix socket)
-  |                          \-- Daemon Server (src/daemon/server.ts)
-  |                                |-- Connection Pool (src/daemon/pool.ts)
-  |                                |     \-- MCP Transport (src/connection/transport.ts)
-  |                                |-- Idle Timer (src/daemon/idle.ts)
-  |                                \-- Health Endpoint (/health with memory stats)
-  |-- Input Validation (src/validation/) -- rejects unsafe identifiers and parameter strings
-  |-- Schema Introspection (src/schema/)
-  |-- Skill Generation (src/generation/)
-  \-- Structured Logger (src/logger/) -- JSON on stderr
-```
-
-### Key Design Decisions
-
-**Persistent daemon.** MCP servers have a 2-5 second startup cost per connection. The daemon keeps connections alive in a pool, so subsequent calls return in milliseconds instead of seconds. The daemon auto-exits after the idle timeout (default 60s).
-
-**Connection pool with health checks.** Connections are validated before use and recycled on failure. The pool enforces a max size to prevent resource exhaustion.
-
-**Structured JSON everywhere.** stdout is always parseable JSON -- no mixed text output. Logs (when enabled) go to stderr as structured JSON lines. This makes mcp2cli reliable for scripting and piping.
-
-**Semantic exit codes.** Different failure modes get different exit codes so callers can branch on the type of error without parsing output.
-
-**Input validation.** Before a call is dispatched, the service name, tool name, and every parameter key are checked as identifiers (non-empty, at most 10,000 characters, no control or invisible characters, no `..` path traversal, no path separators, no `?` or `#`), and every string parameter value is checked for length and control characters. Prototype-pollution keys (`__proto__`, `constructor`, `prototype`) and nesting deeper than 10 levels are rejected. A failure returns an `INPUT_VALIDATION_ERROR` with the reason. Type checking against the tool's schema is left to the MCP server.
-
-## Agent Integration
-
-mcp2cli is designed to be called from AI agents via bash tool use. A typical agent workflow:
-
-```bash
-# Agent discovers available tools
-mcp2cli n8n --help
-
-# Agent reads the schema to understand parameters
-mcp2cli schema n8n.n8n_get_workflow
-
-# Agent invokes the tool
-mcp2cli n8n n8n_get_workflow --params '{"id": "abc123"}'
-```
-
-This pattern keeps MCP tool definitions out of the agent's system prompt entirely. The agent only pays context cost when it actually needs to call a tool, and even then only for the specific tool's schema -- not all tools from all servers.
-
-## Multi-User Authentication
-
-mcp2cli supports multi-user RBAC via `~/.config/mcp2cli/tokens.json`. Each user or agent gets a bearer token with a role.
-
-### tokens.json
-
-```json
-{
-  "tokens": [
-    {
-      "id": "alice",
-      "token": "your-admin-token-here",
-      "role": "admin",
-      "description": "Full admin access",
-      "username": "alice",
-      "password": "your-web-ui-password",
-      "expiresAt": "2026-07-01T00:00:00.000Z"
-    },
-    {
-      "id": "researcher",
-      "token": "your-agent-token-here",
-      "role": "agent",
-      "description": "AI agent - tools + read, no config mutations",
-      "expiresAt": "2026-07-01T00:00:00.000Z"
-    },
-    {
-      "id": "viewer01",
-      "token": "your-viewer-token-here",
-      "role": "viewer",
-      "description": "Read-only access"
-    }
-  ]
-}
-```
-
-Generate secure tokens: `openssl rand -base64 32`
-
-### RBAC Roles
-
-| Permission | viewer | agent | admin |
-|------------|--------|-------|-------|
-| List services, status | yes | yes | yes |
-| Call tools, list tools, schema | no | yes | yes |
-| Read credentials | no | yes | yes |
-| Add/update/remove services | no | no | yes |
-| Write credentials, manage groups | no | no | yes |
-| Reload, import, shutdown | no | no | yes |
-
-The `username`/`password` fields enable web UI login at the daemon's root URL. Token-based auth (Bearer header) works for all API and CLI access.
-
-The optional `expiresAt` field enables token expiry and refresh. Expired tokens are rejected. Near-expiry tokens from `tokens.json` can be rotated through `POST /api/auth/refresh`; the daemon writes the new token back to `tokens.json` and hot-reloads token file edits. Local CLI clients proactively refresh near-expiry admin tokens before daemon API calls.
-
-### Fallback Behavior
-
-- **No tokens.json, no env token:** Auth disabled, all requests treated as admin (backward compatible)
-- **`MCP2CLI_AUTH_TOKEN` env var only:** Legacy single-token mode, treated as admin
-- **tokens.json exists:** Full multi-user RBAC
-
-## Per-Identity Credential Management
-
-Different users and agents can have their own API keys for backend services. When alice calls open-brain, she uses her key. When researcher calls it, the agents' shared key is used.
-
-### credentials.json
-
-Create `~/.config/mcp2cli/credentials.json`:
-
-```json
-{
-  "groups": {
-    "ai_agents": ["researcher", "builder", "ops-bot", "claude"]
-  },
-  "credentials": {
-    "alice": {
-      "open-brain": { "headers": { "Authorization": "Bearer alices-ob-key" } }
-    },
-    "ai_agents": {
-      "open-brain": { "headers": { "Authorization": "Bearer agents-shared-ob-key" } },
-      "n8n": { "env": { "N8N_API_KEY": "agents-n8n-key" } }
-    }
-  },
-  "defaults": {
-    "proxmox": { "headers": { "Authorization": "PVEAPIToken=shared-token" } }
-  }
-}
-```
-
-### Resolution Chain
-
-When a tool call comes in, credentials are resolved in priority order:
-
-1. **User-specific** -- `credentials[userId][service]`
-2. **Group** -- first matching group the user belongs to
-3. **Defaults** -- `defaults[service]`
-4. **services.json** -- whatever's baked into the service config (backward compatible)
-
-For http/websocket services, credential headers are merged into the connection. For stdio services, credential env vars are merged into the process environment.
-
-For identity-sensitive services, set `requiresCredentials: true` in `services.json`. If no user, group, or explicit default credential exists, the daemon rejects the call instead of using base service headers.
-
-### Credential CLI
-
-```bash
-# Set credentials for an identity on a service
-mcp2cli credentials set alice open-brain --header "Authorization: Bearer my-key"
-
-# Set env-based credentials (for stdio services)
-mcp2cli credentials set alice n8n --env "N8N_API_KEY=my-n8n-key"
-
-# Set a default credential (used when no user/group match)
-mcp2cli credentials set-default proxmox --header "Authorization: PVEAPIToken=shared"
-
-# List all credentials (values are redacted)
-mcp2cli credentials list
-
-# Show effective credential source for a user
-mcp2cli credentials resolve researcher open-brain
-# → {"exists": true, "source": "group"}
-
-# Group management
-mcp2cli credentials group add ai_agents researcher builder ops-bot
-mcp2cli credentials group add-members ai_agents claude
-mcp2cli credentials group remove-members ai_agents builder
-mcp2cli credentials group list
-
-# Remove credentials
-mcp2cli credentials remove alice open-brain
-mcp2cli credentials remove-default proxmox
-mcp2cli credentials group remove ai_agents
-
-# Reload from disk after manual edits
-mcp2cli credentials reload
-
-# Populate Open Brain credentials from a Vaultwarden item
-mcp2cli credentials bootstrap-open-brain --item "mcp2cli-user-tokens"
-```
-
-### Open Brain Example
-
-Open Brain (OBv2) is an HTTP MCP service where the bearer token controls namespace identity. Do not put an Open Brain `Authorization` header in `services.json`; store it only as a per-identity credential.
-
-**services.json** -- base config for a hosted daemon (no credentials, endpoint only):
-```json
-{
-  "services": {
-    "open-brain": {
-      "backend": "http",
-      "url": "http://open-brain.example.internal:3100/mcp",
-      "source": "remote",
-      "requiresCredentials": true,
-      "preconnect": false
-    }
-  }
-}
-```
-
-Use `source: "remote"` when the CLI is routing through a hosted mcp2cli daemon. `requiresCredentials: true` makes missing per-identity credentials fail closed, and `preconnect: false` prevents daemon startup from opening an unauthenticated base Open Brain connection.
-
-**credentials.json** -- per-identity keys:
-```json
-{
-  "groups": {
-    "ai_agents": ["researcher", "builder", "claude"]
-  },
-  "credentials": {
-    "alice": {
-      "open-brain": { "headers": { "Authorization": "Bearer alices-ob-api-key" } }
-    },
-    "ai_agents": {
-      "open-brain": { "headers": { "Authorization": "Bearer agents-shared-ob-key" } }
-    }
-  }
-}
-```
-
-Now when alice calls `mcp2cli open-brain search_all --params '{"query": "kubernetes"}'`, her personal key is injected. When researcher calls the same tool, the agents' shared key is used. Each gets their own connection in the pool.
-
-**Vaultwarden bootstrap** -- if the item `mcp2cli-user-tokens` has custom fields such as `AUTH_TOKEN_USER_ALICE`, `AUTH_TOKEN_USER_RESEARCHER`, and `AUTH_TOKEN_USER_BUILDER`, run:
-
-```bash
-mcp2cli credentials bootstrap-open-brain
-```
-
-The field suffix is lowercased and used as the identity (`AUTH_TOKEN_USER_ALICE` -> `alice`). Existing credentials are skipped unless `--force` is passed. The command prints counts and identity names only; it does not print bearer tokens.
-
-### Caller Identity Headers
-
-Header and env values support `${caller.id}` and `${caller.role}` template variables. These are replaced with the authenticated caller's identity at call time.
-
-**In services.json** -- inject identity headers for services whose backend trusts caller metadata instead of per-user bearer tokens:
-```json
-{
-  "services": {
-    "example-service": {
-      "backend": "http",
-      "url": "https://example.internal/mcp",
-      "headers": {
-        "X-Agent-Id": "${caller.id}",
-        "X-Role": "${caller.role}"
-      }
-    }
-  }
-}
-```
-
-When builder calls the service, the request headers become `X-Agent-Id: builder` and `X-Role: agent`.
-
-**In credentials.json** -- combine per-identity keys with identity headers:
-```json
-{
-  "credentials": {
-    "alice": {
-      "open-brain": {
-        "headers": {
-          "Authorization": "Bearer alices-ob-key",
-          "X-Namespace": "${caller.id}"
-        }
-      }
-    }
-  }
-}
-```
-
-Templates work in both headers and env values. Unknown variables (e.g., `${caller.email}`) are left unexpanded.
-
-### Security
-
-- **Redacted list output** -- `GET /api/credentials` returns `Bear***` not full values
-- **IDOR protection** -- agents can only resolve their own credentials, admin required for others
-- **File permissions** -- `credentials.json` is written with `0600` (owner read/write only)
-- **Input validation** -- header values reject CRLF injection, dangerous headers (Host, Transfer-Encoding) and env vars (PATH, LD_PRELOAD, NODE_OPTIONS) are blocked
-- **Atomic writes** -- temp file + rename prevents partial writes on crash
-- **Pool invalidation** -- changing credentials evicts stale connections automatically
-
-## Advanced Features
-
-### Schema Caching
-
-Schemas are cached locally to avoid re-fetching on every invocation. Cached schemas live at `~/.cache/mcp2cli/schemas/` with a 24-hour TTL. Cache drift is detected via SHA-256 hashing -- if the upstream schema changes, the cache is automatically invalidated.
-
-```bash
-# Check cache status (age, TTL, drift)
-mcp2cli cache status
-
-# Clear all cached schemas
-mcp2cli cache clear
-
-# Clear cache for a specific service
-mcp2cli cache clear n8n
-
-# Bypass cache for a single schema lookup
-mcp2cli schema n8n.n8n_list_workflows --fresh
-```
-
-Override the cache directory with `MCP2CLI_CACHE_DIR`.
-
-### Access Control
-
-Restrict which tools are exposed per service using `allowTools` and `blockTools` in `services.json`. Both accept glob patterns.
-
-```json
-{
-  "services": {
-    "n8n": {
-      "description": "n8n workflow automation",
-      "backend": "stdio",
-      "command": "npx",
-      "args": ["-y", "@anthropic/n8n-mcp"],
-      "allowTools": ["n8n_list_*", "n8n_get_*"],
-      "blockTools": ["n8n_delete_*"]
-    }
-  }
-}
-```
-
-When both are present, `allowTools` is evaluated first (whitelist), then `blockTools` removes matches from the allowed set.
-
-#### Cross-Service Tool Search
-
-Search for tools across all services using cached schemas:
-
-```bash
-# Find all tools matching a pattern
-mcp2cli grep "workflow"
-
-# Regex patterns work
-mcp2cli grep "delete|remove"
-```
-
-This searches cached schemas only -- no MCP connections are made.
-
-### WebSocket Transport
-
-Connect to MCP servers over WebSocket. Supports optional stdio fallback and access control, same as HTTP.
-
-```json
-{
-  "services": {
-    "remote-mcp": {
-      "description": "Remote MCP server via WebSocket",
-      "backend": "websocket",
-      "url": "ws://mcp-gateway.local:3000/mcp",
-      "fallback": {
-        "command": "npx",
-        "args": ["-y", "@anthropic/n8n-mcp"]
-      }
-    }
-  }
-}
-```
-
-WebSocket services benefit from the same circuit breaker and fallback behavior as HTTP services.
-
-### Batch Tool Calls
-
-Execute multiple tool calls in a single invocation by piping NDJSON to `mcp2cli batch`. Each line is a JSON object with `service`, `tool`, and `params` fields:
-
-```bash
-# Sequential execution (default)
-cat <<EOF | mcp2cli batch
-{"service": "n8n", "tool": "n8n_list_workflows", "params": {}}
-{"service": "n8n", "tool": "n8n_get_workflow", "params": {"id": "1"}}
-EOF
-
-# Parallel execution
-cat <<EOF | mcp2cli batch --parallel
-{"service": "n8n", "tool": "n8n_list_workflows", "params": {}}
-{"service": "n8n", "tool": "n8n_get_workflow", "params": {"id": "1"}}
-EOF
-```
-
-Output is NDJSON -- one result per line with the original service/tool for correlation:
-
-```json
-{"service":"n8n","tool":"n8n_list_workflows","success":true,"result":{...}}
-{"service":"n8n","tool":"n8n_get_workflow","success":true,"result":{...}}
-```
-
-Errors for individual calls are reported inline without aborting the batch.
-
-### Gateway Resilience
-
-HTTP/SSE services can define a `fallback` stdio config. If the remote gateway is unreachable, mcp2cli transparently falls back to a local MCP server process.
-
-```json
-{
-  "services": {
-    "n8n": {
-      "description": "n8n via HTTP gateway with stdio fallback",
-      "backend": "http",
-      "url": "http://mcp-gateway:3000/n8n",
-      "fallback": {
-        "command": "npx",
-        "args": ["-y", "@anthropic/n8n-mcp"]
-      }
-    }
-  }
-}
-```
-
-A circuit breaker protects against repeated failures: after 5 consecutive failures the circuit opens and routes directly to fallback for 60 seconds before re-probing the primary. Circuit state is persisted to `~/.cache/mcp2cli/circuit-breaker/` so it survives process restarts.
-
-### Output Formats
-
-Control output format with the `--format` flag:
-
-```bash
-mcp2cli n8n n8n_list_workflows --params '{}' --format table
-mcp2cli n8n n8n_list_workflows --params '{}' --format yaml
-mcp2cli n8n n8n_list_workflows --params '{}' --format csv
-mcp2cli n8n n8n_list_workflows --params '{}' --format ndjson
-```
-
-| Format | Description |
-|--------|-------------|
-| `json` | Default. Structured JSON (unchanged from v1.0) |
-| `table` | Aligned columns -- human-readable terminal output |
-| `yaml` | YAML output |
-| `csv` | RFC 4180 CSV -- pipe to spreadsheets or `csvtool` |
-| `ndjson` | One JSON object per line -- for streaming pipelines |
-
-Error responses are always JSON regardless of the `--format` flag.
-
-### Skill Auto-Regeneration
-
-Generated skill files can be previewed and kept in sync with upstream schema changes:
-
-```bash
-# Preview what would change without writing
-mcp2cli generate-skills --diff n8n
-
-# Regenerate (preserves manual sections)
-mcp2cli generate-skills n8n
-```
-
-Manual edits inside `MANUAL:START` / `MANUAL:END` markers are preserved across regeneration. When schema drift is detected (via the caching layer), skill regeneration can be triggered automatically.
-
-For Open Brain MCP changes, use the registry-backed path rather than directly
-refreshing a local daemon as the release proof:
-
-```bash
-# First land any required registry/config update in your service registry.
-# Then make mcp2cli pull the registry-backed service definition and refresh live schemas.
-mcp2cli cache diff open-brain
-mcp2cli cache warm open-brain
-mcp2cli generate-skills open-brain --conflict=merge
-mcp2cli open-brain --help
-```
-
-Local validation should use an isolated temporary `MCP2CLI_HOME`/config/cache so
-tests cannot mutate the operator's real local `~/.config/mcp2cli` state. Final
-verification should run against the hosted daemon and prove the new tools are
-visible and callable there.
-
-## Additional Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP2CLI_CACHE_DIR` | `~/.cache/mcp2cli` | Base directory for schema cache and circuit breaker state |
-| `MCP2CLI_TOKENS_FILE` | `~/.config/mcp2cli/tokens.json` | Path to multi-user token config |
-| `MCP2CLI_TOKEN_REFRESH_WINDOW_MS` | `86400000` | Refresh window for expiring tokens (default 24h) |
-| `MCP2CLI_TOKEN_TTL_MS` | `2592000000` | Lifetime for refreshed tokens (default 30d) |
-| `MCP2CLI_CREDENTIALS_FILE` | `~/.config/mcp2cli/credentials.json` | Path to per-identity credential mappings |
-| `MCP2CLI_IMPORT_TOKEN` | (unset) | Bearer token used only for `importUrl` config imports |
-| `MCP2CLI_IMPORT_ALLOWED_HOSTS` | (required for `importUrl`) | Comma-separated allowlist for `importUrl` hostnames |
-| `MCP2CLI_IMPORT_ALLOW_DNS` | (unset) | Set to `1` to permit DNS hostnames for non-private `importUrl` targets |
-| `MCP2CLI_IMPORT_ALLOW_HTTP` | (unset) | Set to `1` to permit non-HTTPS `importUrl` targets |
-| `MCP2CLI_IMPORT_ALLOW_PRIVATE` | (unset) | Set to `1` to permit loopback/private/link-local `importUrl` targets |
-| `MCP2CLI_METRICS_INCLUDE_CALLER` | (unset) | Set to `1` to include raw caller labels on public `/metrics`; disabled by default |
-| `MCP2CLI_VAULTWARDEN_TIMEOUT_MS` | `10000` | Timeout for Vaultwarden-backed `${secret:...}` lookups |
-
-## Network Deployment
-
-mcp2cli can run as a centralized TCP daemon, allowing multiple machines to share a single set of MCP server connections. Install and configure MCP backends once on a server, then connect from any machine using the CLI client or the bash wrapper (curl + jq only -- no Bun required).
-
-### Quick Start (TCP Mode)
-
-**Server** -- start the daemon with TCP binding:
-
-```bash
-export MCP2CLI_LISTEN_HOST=0.0.0.0
-export MCP2CLI_LISTEN_PORT=9500
-export MCP2CLI_AUTH_TOKEN=$(openssl rand -hex 32)
-MCP2CLI_DAEMON=1 mcp2cli
-```
-
-**Client** -- point any machine at the remote daemon:
-
-```bash
-export MCP2CLI_REMOTE_URL=http://mcp-server.local:9500
-export MCP2CLI_AUTH_TOKEN=<same-token-as-server>
-mcp2cli n8n n8n_list_workflows --params '{}'
-```
-
-When `MCP2CLI_REMOTE_URL` is set, the CLI skips local daemon startup entirely and sends requests directly over HTTP.
-
-### Network Environment Variables
-
-In addition to the [base environment variables](#environment-variables), network mode adds:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP2CLI_LISTEN_HOST` | (unset) | Bind address for TCP mode. Setting this enables TCP instead of Unix socket. Use `0.0.0.0` to listen on all interfaces |
-| `MCP2CLI_LISTEN_PORT` | `9500` | TCP port when `MCP2CLI_LISTEN_HOST` is set |
-| `MCP2CLI_AUTH_TOKEN` | (unset) | Bearer token for TCP authentication. Required for production deployments. Alias: `MCP_TOKEN` |
-| `MCP2CLI_REMOTE_URL` | (unset) | URL of remote mcp2cli daemon (e.g. `https://mcp2cli.example.internal`). Enables remote client mode. Alias: `MCP_HOST` |
-| `MCP2CLI_CONFIG` | `~/.config/mcp2cli/services.json` | Path to service definitions (useful for server-side config in `/etc/mcp2cli/`) |
-| `MCP2CLI_TOKENS_FILE` | `~/.config/mcp2cli/tokens.json` | Path to multi-user token/RBAC config |
-| `MCP2CLI_CREDENTIALS_FILE` | `~/.config/mcp2cli/credentials.json` | Path to per-identity credential mappings |
-
-### Authentication
-
-The daemon supports two auth modes (see [Multi-User Authentication](#multi-user-authentication) above):
-
-1. **Multi-user RBAC** via `tokens.json` -- each user/agent gets their own token and role
-2. **Legacy single-token** via `MCP2CLI_AUTH_TOKEN` env var -- treated as admin
-
-All token comparisons use timing-safe equality to prevent timing attacks.
-
-**Auth-exempt paths** -- these skip authentication so load balancers and monitoring can probe without credentials:
-- `GET /health` -- health check with uptime, memory, and active connection count
-- `GET /metrics` -- Prometheus metrics endpoint with aggregate service/tool metrics
-
-### Prometheus Metrics
-
-The daemon exposes metrics at `GET /metrics` in Prometheus text exposition format. Key metrics:
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `mcp2cli_requests_total` | counter | Total requests by `{service, tool}` |
-| `mcp2cli_requests_errors_total` | counter | Failed requests by `{service, tool}` |
-| `mcp2cli_request_duration_ms` | histogram | Request latency with buckets (10ms - 30s) |
-| `mcp2cli_requests_active` | gauge | Currently in-flight requests |
-| `mcp2cli_pool_connections_active` | gauge | Current connection pool size |
-| `mcp2cli_pool_services` | gauge | Connected services (`{service}` label) |
-| `mcp2cli_connection_events_total` | counter | Connect/disconnect/health-check-failure by `{service}` |
-| `mcp2cli_auth_failures_total` | counter | Total authentication failures |
-| `mcp2cli_process_uptime_seconds` | gauge | Daemon uptime |
-| `mcp2cli_process_memory_rss_bytes` | gauge | Resident set size |
-
-Raw caller labels on public `/metrics` are disabled by default to avoid exposing user IDs to unauthenticated scrapers. Set `MCP2CLI_METRICS_INCLUDE_CALLER=1` only in trusted monitoring environments to add `{service, tool, caller}` series.
-
-For a quick JSON breakdown by identity, call `GET /api/metrics/user/:userId` with a bearer token that has `status` permission. Non-admin callers can only read their own user metrics; admins can read any user.
-
-Remote clients discover the daemon's service inventory through authenticated `GET /api/services/discovery`, not the public `/health` probe.
-
-Add to your Prometheus config:
-
-```yaml
-scrape_configs:
-  - job_name: mcp2cli
-    static_configs:
-      - targets: ['mcp-server.local:9500']
-```
-
-### Bash Wrapper (curl-only clients)
-
-For machines that only have `curl` and `jq` (no Bun runtime), use the bash wrapper:
-
-```bash
-# Install the wrapper
-cp scripts/mcp2cli-remote /usr/local/bin/
-chmod +x /usr/local/bin/mcp2cli-remote
-
-# Configure
-export MCP2CLI_REMOTE_URL=http://mcp-server.local:9500
-export MCP2CLI_AUTH_TOKEN=<token>
-
-# Use it like the full CLI
-mcp2cli-remote n8n n8n_list_workflows '{}'
-```
-
-### LXC Deployment
-
-The `deploy/` directory contains everything needed to run mcp2cli as a systemd service in an LXC container (or any Linux host):
-
-| File | Purpose |
-|------|---------|
-| `deploy/mcp2cli.service` | systemd unit file (hardened with `NoNewPrivileges`, `ProtectSystem=strict`) |
-| `deploy/env.example` | Environment file template -- copy to `/etc/mcp2cli/env` |
-| `deploy/services-server.json` | Example server-side service config |
-
-Setup:
-
-```bash
-# Copy files into place
-cp deploy/mcp2cli.service /etc/systemd/system/
-mkdir -p /etc/mcp2cli
-cp deploy/env.example /etc/mcp2cli/env
-cp deploy/services-server.json /etc/mcp2cli/services.json
-
-# Edit config
-vim /etc/mcp2cli/env           # set MCP2CLI_AUTH_TOKEN
-vim /etc/mcp2cli/services.json  # configure your MCP backends
-
-# Enable and start
-useradd --system --no-create-home mcp2cli
-systemctl daemon-reload
-systemctl enable --now mcp2cli
-```
-
-### curl Examples
-
-```bash
-SERVER=http://mcp-server.local:9500
-TOKEN=your-token-here
-
-# Health check (no auth required)
-curl -s $SERVER/health | jq .
-
-# Prometheus metrics (no auth required)
-curl -s $SERVER/metrics
-
-# List tools for a service
-curl -s -X POST $SERVER/list-tools \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"service": "n8n"}' | jq .
-
-# Invoke a tool
-curl -s -X POST $SERVER/call \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"service": "n8n", "tool": "n8n_list_workflows", "params": {}}' | jq .
-
-# Get a tool schema
-curl -s -X POST $SERVER/schema \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"service": "n8n", "tool": "n8n_list_workflows"}' | jq .
-```
-
-## Development
-
-```bash
-bun run dev -- <args>     # run without building
-bun test                  # run test suite
-bun run build             # compile to dist/mcp2cli
-```
-
-## License
-
-MIT
+Rico Rojas, https://rico-rojas.com

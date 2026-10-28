@@ -107,7 +107,7 @@ describe("loadConfig", () => {
             services: {
               remote: {
                 backend: "http",
-                url: "http://ct216.example/mcp",
+                url: "http://mcp-host.example/mcp",
                 source: "remote",
               },
             },
@@ -188,7 +188,7 @@ describe("loadConfig", () => {
           services: {
             remote: {
               backend: "http",
-              url: "http://ct216.example/mcp",
+              url: "http://mcp-host.example/mcp",
             },
           },
         });
@@ -231,7 +231,7 @@ describe("loadConfig", () => {
           services: {
             remote: {
               backend: "http",
-              url: "http://ct216.example/mcp",
+              url: "http://mcp-host.example/mcp",
             },
           },
         });
@@ -281,7 +281,7 @@ describe("loadConfig", () => {
           services: {
             remote: {
               backend: "http",
-              url: "http://ct216.example/mcp",
+              url: "http://mcp-host.example/mcp",
             },
           },
         });
@@ -324,7 +324,7 @@ describe("loadConfig", () => {
           services: {
             remote: {
               backend: "http",
-              url: "http://ct216.example/mcp",
+              url: "http://mcp-host.example/mcp",
             },
           },
         });
@@ -369,7 +369,7 @@ describe("loadConfig", () => {
         requests++;
         return Response.json({
           services: {
-            remote: { backend: "http", url: "http://ct216.example/mcp" },
+            remote: { backend: "http", url: "http://mcp-host.example/mcp" },
           },
         });
       },
@@ -406,7 +406,7 @@ describe("loadConfig", () => {
         redirectedAuthHeader = req.headers.get("authorization");
         return Response.json({
           services: {
-            remote: { backend: "http", url: "http://ct216.example/mcp" },
+            remote: { backend: "http", url: "http://mcp-host.example/mcp" },
           },
         });
       },
@@ -457,7 +457,7 @@ describe("loadConfig", () => {
         authHeader = req.headers.get("authorization");
         return Response.json({
           services: {
-            remote: { backend: "http", url: "http://ct216.example/mcp" },
+            remote: { backend: "http", url: "http://mcp-host.example/mcp" },
           },
         });
       },
@@ -573,7 +573,7 @@ describe("mergeImportedConfig", () => {
       services: {
         shared: {
           backend: "http",
-          url: "http://ct216.example/mcp",
+          url: "http://mcp-host.example/mcp",
           headers: {},
           source: "remote",
         },

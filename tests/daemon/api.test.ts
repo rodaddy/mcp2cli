@@ -119,15 +119,11 @@ describe("ConfigManager API operations", () => {
   });
 
   test("add rejects stdio without command", async () => {
-    expect(
-      mgr.addService("bad", { backend: "stdio" }),
-    ).rejects.toThrow();
+    expect(mgr.addService("bad", { backend: "stdio" })).rejects.toThrow();
   });
 
   test("add rejects http without url", async () => {
-    expect(
-      mgr.addService("bad", { backend: "http" }),
-    ).rejects.toThrow();
+    expect(mgr.addService("bad", { backend: "http" })).rejects.toThrow();
   });
 
   test("add service with http backend", async () => {
@@ -179,7 +175,8 @@ describe("ConfigManager API operations", () => {
         },
       },
     });
-    exportConfig.importUrl = "https://user:pass@example.test/export?token=do-not-export#frag";
+    exportConfig.importUrl =
+      "https://user:pass@example.test/export?token=do-not-export#frag";
     exportConfig.importTtlSeconds = 3600;
     const exportMgr = new ConfigManager(exportConfig, configPath);
     const pool = new ConnectionPool();
@@ -221,7 +218,11 @@ describe("ConfigManager API operations", () => {
       if (remote.backend === "http") {
         expect(remote.url).toBe("http://example.test/mcp");
         expect(remote.headers).toEqual({});
-        expect(remote.fallback).toEqual({ command: "/usr/bin/env", args: ["--api-key=[REDACTED]", "--safe", "value"], env: {} });
+        expect(remote.fallback).toEqual({
+          command: "/usr/bin/env",
+          args: ["--api-key=[REDACTED]", "--safe", "value"],
+          env: {},
+        });
       }
     } finally {
       server.stop(true);
@@ -245,21 +246,29 @@ describe("Auth refresh API", () => {
 
   test("POST /api/auth/refresh rotates a valid near-expiry token", async () => {
     const now = Date.now();
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{
-        id: "skippy",
-        token: "old-token",
-        role: "agent",
-        expiresAt: new Date(now + 5 * 60 * 1000).toISOString(),
-      }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [
+          {
+            id: "scout",
+            token: "old-token",
+            role: "agent",
+            expiresAt: new Date(now + 5 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+    );
     process.env.MCP2CLI_TOKEN_REFRESH_WINDOW_MS = String(10 * 60 * 1000);
     process.env.MCP2CLI_TOKEN_TTL_MS = String(60 * 60 * 1000);
 
     const pool = new ConnectionPool();
     const authProvider = await TokenAuthProvider.load(tokensPath);
     const server = createDaemonServer({
-      listenConfig: { mode: "unix", socketPath: join(tmpDir, "auth-refresh.sock") },
+      listenConfig: {
+        mode: "unix",
+        socketPath: join(tmpDir, "auth-refresh.sock"),
+      },
       pool,
       config: makeConfig({ echo: STDIO_SERVICE }),
       idleTimer: new IdleTimer(60000, () => {}),
@@ -276,10 +285,15 @@ describe("Auth refresh API", () => {
         }),
       );
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { success: boolean; token: string; userId: string; role: string };
+      const body = (await res.json()) as {
+        success: boolean;
+        token: string;
+        userId: string;
+        role: string;
+      };
       expect(body.success).toBe(true);
       expect(body.token).not.toBe("old-token");
-      expect(body.userId).toBe("skippy");
+      expect(body.userId).toBe("scout");
       expect(body.role).toBe("agent");
 
       const meOld = await server.fetch(

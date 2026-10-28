@@ -51,8 +51,8 @@ describe("null bytes and double encoding (SEC-04)", () => {
     }
   });
 
-  test("pre-encoded legitimate value (user%40gmail.com) caught by % rejection", () => {
-    const result = rejectPathTraversal("user%40gmail.com", "field");
+  test("pre-encoded legitimate value (user%40example.com) caught by % rejection", () => {
+    const result = rejectPathTraversal("user%40example.com", "field");
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(result.code).toBe("PATH_TRAVERSAL");

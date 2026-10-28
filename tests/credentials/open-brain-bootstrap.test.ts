@@ -9,17 +9,17 @@ describe("Open Brain credential bootstrap", () => {
     const result = buildOpenBrainCredentialsFromVaultwarden({
       fields: {
         AUTH_TOKEN_USER_RICO: "admin:rico-token",
-        AUTH_TOKEN_USER_SKIPPY: "agent:skippy-token",
-        AUTH_TOKEN_USER_BILBY: "bilby-token",
+        AUTH_TOKEN_USER_SCOUT: "agent:scout-token",
+        AUTH_TOKEN_USER_BUILDER: "builder-token",
         notes: "not a token",
       },
     });
 
     expect(result).toEqual([
       {
-        identity: "bilby",
+        identity: "builder",
         service: "open-brain",
-        credential: { headers: { Authorization: "Bearer bilby-token" } },
+        credential: { headers: { Authorization: "Bearer builder-token" } },
       },
       {
         identity: "rico",
@@ -27,9 +27,9 @@ describe("Open Brain credential bootstrap", () => {
         credential: { headers: { Authorization: "Bearer rico-token" } },
       },
       {
-        identity: "skippy",
+        identity: "scout",
         service: "open-brain",
-        credential: { headers: { Authorization: "Bearer skippy-token" } },
+        credential: { headers: { Authorization: "Bearer scout-token" } },
       },
     ]);
   });
