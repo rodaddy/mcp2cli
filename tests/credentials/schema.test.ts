@@ -47,32 +47,73 @@ describe("ServiceCredentialSchema", () => {
   });
 
   test("rejects dangerous header names", () => {
-    expect(ServiceCredentialSchema.safeParse({ headers: { Host: "evil.com" } }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({ headers: { "Transfer-Encoding": "chunked" } }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({ headers: { "content-length": "0" } }).success).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({ headers: { Host: "evil.com" } })
+        .success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({
+        headers: { "Transfer-Encoding": "chunked" },
+      }).success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({ headers: { "content-length": "0" } })
+        .success,
+    ).toBe(false);
   });
 
   test("rejects reserved object keys in headers and env", () => {
-    expect(ServiceCredentialSchema.safeParse({
-      headers: Object.fromEntries([["__proto__", "bad"]]),
-    }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({
-      env: Object.fromEntries([["constructor", "bad"]]),
-    }).success).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({
+        headers: Object.fromEntries([["__proto__", "bad"]]),
+      }).success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({
+        env: Object.fromEntries([["constructor", "bad"]]),
+      }).success,
+    ).toBe(false);
   });
 
   test("rejects CRLF in header values", () => {
-    expect(ServiceCredentialSchema.safeParse({ headers: { "X-Custom": "value\r\nInjected: true" } }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({ headers: { "X-Custom": "value\nInjected: true" } }).success).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({
+        headers: { "X-Custom": "value\r\nInjected: true" },
+      }).success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({
+        headers: { "X-Custom": "value\nInjected: true" },
+      }).success,
+    ).toBe(false);
   });
 
   test("rejects dangerous env var names", () => {
-    expect(ServiceCredentialSchema.safeParse({ env: { PATH: "/evil" } }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({ env: { LD_PRELOAD: "/evil.so" } }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({ env: { NODE_OPTIONS: "--require /evil" } }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({ env: { DYLD_INSERT_LIBRARIES: "/evil.dylib" } }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({ env: { MCP2CLI_AUTH_TOKEN: "stolen" } }).success).toBe(false);
-    expect(ServiceCredentialSchema.safeParse({ env: { HOME: "/tmp" } }).success).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({ env: { PATH: "/evil" } }).success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({ env: { LD_PRELOAD: "/evil.so" } })
+        .success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({
+        env: { NODE_OPTIONS: "--require /evil" },
+      }).success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({
+        env: { DYLD_INSERT_LIBRARIES: "/evil.dylib" },
+      }).success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({
+        env: { MCP2CLI_AUTH_TOKEN: "stolen" },
+      }).success,
+    ).toBe(false);
+    expect(
+      ServiceCredentialSchema.safeParse({ env: { HOME: "/tmp" } }).success,
+    ).toBe(false);
   });
 
   test("rejects too many headers", () => {
@@ -92,7 +133,7 @@ describe("CredentialsConfigSchema", () => {
   test("accepts valid full config", () => {
     const result = CredentialsConfigSchema.safeParse({
       groups: {
-        ai_agents: ["skippy", "bilby", "nagatha"],
+        ai_agents: ["scout", "builder", "navigator"],
       },
       credentials: {
         rico: {
@@ -108,9 +149,17 @@ describe("CredentialsConfigSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.groups.ai_agents).toEqual(["skippy", "bilby", "nagatha"]);
-      expect(result.data.credentials.rico?.["open-brain"]?.headers?.Authorization).toBe("Bearer rico-key");
-      expect(result.data.defaults.proxmox?.headers?.Authorization).toBe("PVEAPIToken=shared");
+      expect(result.data.groups.ai_agents).toEqual([
+        "scout",
+        "builder",
+        "navigator",
+      ]);
+      expect(
+        result.data.credentials.rico?.["open-brain"]?.headers?.Authorization,
+      ).toBe("Bearer rico-key");
+      expect(result.data.defaults.proxmox?.headers?.Authorization).toBe(
+        "PVEAPIToken=shared",
+      );
     }
   });
 
@@ -127,8 +176,8 @@ describe("CredentialsConfigSchema", () => {
   test("accepts config with only credentials", () => {
     const result = CredentialsConfigSchema.safeParse({
       credentials: {
-        skippy: {
-          n8n: { env: { N8N_API_KEY: "skippy-key" } },
+        scout: {
+          n8n: { env: { N8N_API_KEY: "scout-key" } },
         },
       },
     });
@@ -166,15 +215,23 @@ describe("CredentialsConfigSchema", () => {
   });
 
   test("rejects reserved object keys in credential config maps", () => {
-    expect(CredentialsConfigSchema.safeParse({
-      groups: Object.fromEntries([["__proto__", ["alice"]]]),
-    }).success).toBe(false);
-    expect(CredentialsConfigSchema.safeParse({
-      credentials: Object.fromEntries([["constructor", { svc: { headers: { X: "1" } } }]]),
-    }).success).toBe(false);
-    expect(CredentialsConfigSchema.safeParse({
-      defaults: Object.fromEntries([["prototype", { headers: { X: "1" } }]]),
-    }).success).toBe(false);
+    expect(
+      CredentialsConfigSchema.safeParse({
+        groups: Object.fromEntries([["__proto__", ["alice"]]]),
+      }).success,
+    ).toBe(false);
+    expect(
+      CredentialsConfigSchema.safeParse({
+        credentials: Object.fromEntries([
+          ["constructor", { svc: { headers: { X: "1" } } }],
+        ]),
+      }).success,
+    ).toBe(false);
+    expect(
+      CredentialsConfigSchema.safeParse({
+        defaults: Object.fromEntries([["prototype", { headers: { X: "1" } }]]),
+      }).success,
+    ).toBe(false);
   });
 
   test("allows credentials keyed by group name", () => {

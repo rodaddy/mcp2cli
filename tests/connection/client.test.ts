@@ -8,8 +8,14 @@ import type { SecretResolver } from "../../src/secrets/index.ts";
 import { resolve } from "path";
 
 const MOCK_SERVER = resolve(import.meta.dir, "../fixtures/mock-mcp-server.ts");
-const NOISY_SERVER = resolve(import.meta.dir, "../fixtures/noisy-mcp-server.ts");
-const ENV_ECHO_SERVER = resolve(import.meta.dir, "../fixtures/env-echo-mcp-server.ts");
+const NOISY_SERVER = resolve(
+  import.meta.dir,
+  "../fixtures/noisy-mcp-server.ts",
+);
+const ENV_ECHO_SERVER = resolve(
+  import.meta.dir,
+  "../fixtures/env-echo-mcp-server.ts",
+);
 
 function mockService(script: string): StdioService {
   return {
@@ -141,7 +147,7 @@ describe("connectToService", () => {
       backend: "stdio" as const,
       command: "bun",
       args: [ENV_ECHO_SERVER],
-      env: { N8N_API_URL: "${secret:RTech MCPs - foo#fields.N8N_API_URL}" },
+      env: { N8N_API_URL: "${secret:Team MCPs - foo#fields.N8N_API_URL}" },
     };
 
     connection = await connectToService(service, { resolver });
@@ -158,7 +164,7 @@ describe("connectToService", () => {
     // The child must see the RESOLVED value, never the literal ref.
     expect(payload.env.N8N_API_URL).toBe("RESOLVED_SECRET_VALUE");
     expect(payload.env.N8N_API_URL).not.toContain("${secret:");
-    expect(calls).toContain("RTech MCPs - foo#fields.N8N_API_URL");
+    expect(calls).toContain("Team MCPs - foo#fields.N8N_API_URL");
   }, 15_000);
 
   it("resolves ${secret:...} refs in args before spawning the child", async () => {

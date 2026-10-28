@@ -1,5 +1,9 @@
 import { describe, test, expect } from "bun:test";
-import { mergeCredentials, userPoolKey, applyCallerTemplates } from "../../src/daemon/credential-merge.ts";
+import {
+  mergeCredentials,
+  userPoolKey,
+  applyCallerTemplates,
+} from "../../src/daemon/credential-merge.ts";
 import type { CallerContext } from "../../src/daemon/credential-merge.ts";
 import type { ServiceConfig } from "../../src/config/index.ts";
 import type { ServiceCredential } from "../../src/credentials/index.ts";
@@ -35,7 +39,9 @@ describe("mergeCredentials", () => {
       headers: { Authorization: "Bearer override" },
     };
     const result = mergeCredentials(service, cred);
-    expect((result as { headers: Record<string, string> }).headers.Authorization).toBe("Bearer override");
+    expect(
+      (result as { headers: Record<string, string> }).headers.Authorization,
+    ).toBe("Bearer override");
   });
 
   test("creates headers when http service has none", () => {
@@ -80,7 +86,9 @@ describe("mergeCredentials", () => {
       env: { API_KEY: "override" },
     };
     const result = mergeCredentials(service, cred);
-    expect((result as { env: Record<string, string> }).env.API_KEY).toBe("override");
+    expect((result as { env: Record<string, string> }).env.API_KEY).toBe(
+      "override",
+    );
   });
 
   test("creates env when stdio service has none", () => {
@@ -108,7 +116,9 @@ describe("mergeCredentials", () => {
       headers: { Added: "new" },
     };
     mergeCredentials(service, cred);
-    expect((service as { headers: Record<string, string> }).headers).toEqual({ Original: "value" });
+    expect((service as { headers: Record<string, string> }).headers).toEqual({
+      Original: "value",
+    });
   });
 
   test("handles credential with no matching fields", () => {
@@ -147,7 +157,7 @@ describe("mergeCredentials", () => {
 });
 
 describe("caller template expansion", () => {
-  const caller: CallerContext = { id: "bilby", role: "agent" };
+  const caller: CallerContext = { id: "builder", role: "agent" };
 
   test("expands ${caller.id} in merged headers", () => {
     const service: ServiceConfig = {
@@ -160,7 +170,7 @@ describe("caller template expansion", () => {
     };
     const result = mergeCredentials(service, cred, caller);
     const headers = (result as { headers: Record<string, string> }).headers;
-    expect(headers["X-Agent-Id"]).toBe("bilby");
+    expect(headers["X-Agent-Id"]).toBe("builder");
     expect(headers["X-Role"]).toBe("agent");
     expect(headers["X-Base"]).toBe("static");
   });
@@ -176,7 +186,7 @@ describe("caller template expansion", () => {
     };
     const result = applyCallerTemplates(service, caller);
     const headers = (result as { headers: Record<string, string> }).headers;
-    expect(headers["X-Namespace"]).toBe("bilby");
+    expect(headers["X-Namespace"]).toBe("builder");
     expect(headers.Authorization).toBe("Bearer static-key");
   });
 
@@ -192,7 +202,7 @@ describe("caller template expansion", () => {
     };
     const result = mergeCredentials(service, cred, caller);
     const env = (result as { env: Record<string, string> }).env;
-    expect(env.NAMESPACE).toBe("bilby");
+    expect(env.NAMESPACE).toBe("builder");
     expect(env.AGENT_ROLE).toBe("agent");
     expect(env.STATIC).toBe("keep");
   });
@@ -228,7 +238,7 @@ describe("caller template expansion", () => {
     };
     const result = applyCallerTemplates(service, caller);
     const headers = (result as { headers: Record<string, string> }).headers;
-    expect(headers["X-Info"]).toBe("bilby:agent");
+    expect(headers["X-Info"]).toBe("builder:agent");
   });
 
   test("does not mutate original config", () => {
@@ -238,7 +248,9 @@ describe("caller template expansion", () => {
       headers: { "X-Agent-Id": "${caller.id}" },
     };
     applyCallerTemplates(service, caller);
-    expect((service as { headers: Record<string, string> }).headers["X-Agent-Id"]).toBe("${caller.id}");
+    expect(
+      (service as { headers: Record<string, string> }).headers["X-Agent-Id"],
+    ).toBe("${caller.id}");
   });
 });
 

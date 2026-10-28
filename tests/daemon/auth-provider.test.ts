@@ -15,15 +15,29 @@ function makeReq(path: string, method = "GET", token?: string): Request {
   return new Request(`http://localhost${path}`, { method, headers });
 }
 
-const ADMIN_TOKEN: TokenEntry = { id: "rico", token: "admin-secret", role: "admin" };
-const AGENT_TOKEN: TokenEntry = { id: "skippy", token: "agent-secret", role: "agent" };
+const ADMIN_TOKEN: TokenEntry = {
+  id: "rico",
+  token: "admin-secret",
+  role: "admin",
+};
+const AGENT_TOKEN: TokenEntry = {
+  id: "scout",
+  token: "agent-secret",
+  role: "agent",
+};
 const ADMIN_WITH_LOGIN: TokenEntry = {
-  id: "rico", token: "admin-secret", role: "admin",
-  username: "rico", password: "test-password-1",
+  id: "rico",
+  token: "admin-secret",
+  role: "admin",
+  username: "rico",
+  password: "test-password-1",
 };
 const AGENT_WITH_LOGIN: TokenEntry = {
-  id: "skippy", token: "agent-secret", role: "agent",
-  username: "skippy", password: "test-password-2",
+  id: "scout",
+  token: "agent-secret",
+  role: "agent",
+  username: "scout",
+  password: "test-password-2",
 };
 
 describe("TokenAuthProvider", () => {
@@ -39,7 +53,7 @@ describe("TokenAuthProvider", () => {
     const provider = new TokenAuthProvider([ADMIN_TOKEN, AGENT_TOKEN]);
     const ctx = provider.authenticate(makeReq("/call", "POST", "agent-secret"));
     expect(ctx).not.toBeNull();
-    expect(ctx!.userId).toBe("skippy");
+    expect(ctx!.userId).toBe("scout");
     expect(ctx!.role).toBe("agent");
   });
 
@@ -95,20 +109,27 @@ describe("TokenAuthProvider", () => {
     const provider = new TokenAuthProvider([
       { ...ADMIN_TOKEN, expiresAt: "2020-01-01T00:00:00.000Z" },
     ]);
-    expect(provider.authenticate(makeReq("/call", "POST", "admin-secret"))).toBeNull();
+    expect(
+      provider.authenticate(makeReq("/call", "POST", "admin-secret")),
+    ).toBeNull();
   });
 
   test("accepts unexpired bearer tokens", () => {
     const provider = new TokenAuthProvider([
       { ...ADMIN_TOKEN, expiresAt: "2999-01-01T00:00:00.000Z" },
     ]);
-    expect(provider.authenticate(makeReq("/call", "POST", "admin-secret"))?.userId).toBe("rico");
+    expect(
+      provider.authenticate(makeReq("/call", "POST", "admin-secret"))?.userId,
+    ).toBe("rico");
   });
 });
 
 describe("TokenAuthProvider.authenticateBasic", () => {
   test("authenticates valid username+password and returns token", () => {
-    const provider = new TokenAuthProvider([ADMIN_WITH_LOGIN, AGENT_WITH_LOGIN]);
+    const provider = new TokenAuthProvider([
+      ADMIN_WITH_LOGIN,
+      AGENT_WITH_LOGIN,
+    ]);
     const result = provider.authenticateBasic("rico", "test-password-1");
     expect(result).not.toBeNull();
     expect(result!.ctx.userId).toBe("rico");
@@ -117,10 +138,13 @@ describe("TokenAuthProvider.authenticateBasic", () => {
   });
 
   test("authenticates agent user", () => {
-    const provider = new TokenAuthProvider([ADMIN_WITH_LOGIN, AGENT_WITH_LOGIN]);
-    const result = provider.authenticateBasic("skippy", "test-password-2");
+    const provider = new TokenAuthProvider([
+      ADMIN_WITH_LOGIN,
+      AGENT_WITH_LOGIN,
+    ]);
+    const result = provider.authenticateBasic("scout", "test-password-2");
     expect(result).not.toBeNull();
-    expect(result!.ctx.userId).toBe("skippy");
+    expect(result!.ctx.userId).toBe("scout");
     expect(result!.ctx.role).toBe("agent");
     expect(result!.token).toBe("agent-secret");
   });
@@ -155,9 +179,9 @@ describe("TokenAuthProvider.authenticateBasic", () => {
     // Token-only entry: no basic auth
     expect(provider.authenticateBasic("rico", "admin-secret")).toBeNull();
     // Entry with login credentials: basic auth works
-    const result = provider.authenticateBasic("skippy", "test-password-2");
+    const result = provider.authenticateBasic("scout", "test-password-2");
     expect(result).not.toBeNull();
-    expect(result!.ctx.userId).toBe("skippy");
+    expect(result!.ctx.userId).toBe("scout");
   });
 });
 
@@ -176,17 +200,24 @@ describe("TokenAuthProvider.load", () => {
 
   test("loads from tokens.json file", async () => {
     const tokensPath = join(tmpDir, "tokens.json");
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [
-        { id: "rico", token: "t1", role: "admin" },
-        { id: "skippy", token: "t2", role: "agent" },
-      ],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [
+          { id: "rico", token: "t1", role: "admin" },
+          { id: "scout", token: "t2", role: "agent" },
+        ],
+      }),
+    );
     process.env.MCP2CLI_TOKENS_FILE = tokensPath;
     const provider = await TokenAuthProvider.load();
     expect(provider.enabled).toBe(true);
-    expect(provider.authenticate(makeReq("/", "GET", "t1"))?.role).toBe("admin");
-    expect(provider.authenticate(makeReq("/", "GET", "t2"))?.role).toBe("agent");
+    expect(provider.authenticate(makeReq("/", "GET", "t1"))?.role).toBe(
+      "admin",
+    );
+    expect(provider.authenticate(makeReq("/", "GET", "t2"))?.role).toBe(
+      "agent",
+    );
   });
 
   test("falls back to MCP2CLI_AUTH_TOKEN", async () => {
@@ -215,23 +246,35 @@ describe("TokenAuthProvider.load", () => {
 
   test("rejects duplicate token ids", async () => {
     const tokensPath = join(tmpDir, "tokens.json");
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [
-        { id: "same", token: "t1", role: "admin" },
-        { id: "same", token: "t2", role: "agent" },
-      ],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [
+          { id: "same", token: "t1", role: "admin" },
+          { id: "same", token: "t2", role: "agent" },
+        ],
+      }),
+    );
     process.env.MCP2CLI_TOKENS_FILE = tokensPath;
     expect(TokenAuthProvider.load()).rejects.toThrow("Duplicate token id");
   });
 
   test("loads entries with username/password", async () => {
     const tokensPath = join(tmpDir, "tokens.json");
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [
-        { id: "rico", token: "t1", role: "admin", username: "rico", password: "pass1" },
-      ],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [
+          {
+            id: "rico",
+            token: "t1",
+            role: "admin",
+            username: "rico",
+            password: "pass1",
+          },
+        ],
+      }),
+    );
     process.env.MCP2CLI_TOKENS_FILE = tokensPath;
     const provider = await TokenAuthProvider.load();
     const result = provider.authenticateBasic("rico", "pass1");
@@ -242,27 +285,40 @@ describe("TokenAuthProvider.load", () => {
 
   test("rejects username without password", async () => {
     const tokensPath = join(tmpDir, "tokens.json");
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{ id: "x", token: "t", role: "admin", username: "x" }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [{ id: "x", token: "t", role: "admin", username: "x" }],
+      }),
+    );
     process.env.MCP2CLI_TOKENS_FILE = tokensPath;
-    expect(TokenAuthProvider.load()).rejects.toThrow("username without password");
+    expect(TokenAuthProvider.load()).rejects.toThrow(
+      "username without password",
+    );
   });
 
   test("rejects invalid role", async () => {
     const tokensPath = join(tmpDir, "tokens.json");
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{ id: "x", token: "t", role: "superadmin" }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [{ id: "x", token: "t", role: "superadmin" }],
+      }),
+    );
     process.env.MCP2CLI_TOKENS_FILE = tokensPath;
     expect(TokenAuthProvider.load()).rejects.toThrow("invalid role");
   });
 
   test("rejects invalid expiresAt", async () => {
     const tokensPath = join(tmpDir, "tokens.json");
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{ id: "x", token: "t", role: "admin", expiresAt: "not-a-date" }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [
+          { id: "x", token: "t", role: "admin", expiresAt: "not-a-date" },
+        ],
+      }),
+    );
     process.env.MCP2CLI_TOKENS_FILE = tokensPath;
     expect(TokenAuthProvider.load()).rejects.toThrow("invalid expiresAt");
   });
@@ -283,14 +339,19 @@ describe("TokenAuthProvider token refresh", () => {
 
   test("refreshes a valid near-expiry token, persists it, and rejects the old token", async () => {
     const now = new Date();
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{
-        id: "skippy",
-        token: "old-token",
-        role: "agent",
-        expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
-      }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [
+          {
+            id: "scout",
+            token: "old-token",
+            role: "agent",
+            expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+    );
 
     const provider = await TokenAuthProvider.load(tokensPath);
     const result = await provider.refreshBearerToken("old-token", {
@@ -302,24 +363,35 @@ describe("TokenAuthProvider token refresh", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.message);
     expect(result.token).not.toBe("old-token");
-    expect(provider.authenticate(makeReq("/call", "POST", "old-token"))).toBeNull();
-    expect(provider.authenticate(makeReq("/call", "POST", result.token))?.userId).toBe("skippy");
+    expect(
+      provider.authenticate(makeReq("/call", "POST", "old-token")),
+    ).toBeNull();
+    expect(
+      provider.authenticate(makeReq("/call", "POST", result.token))?.userId,
+    ).toBe("scout");
 
-    const onDisk = await Bun.file(tokensPath).json() as { tokens: Array<{ token: string; expiresAt: string }> };
+    const onDisk = (await Bun.file(tokensPath).json()) as {
+      tokens: Array<{ token: string; expiresAt: string }>;
+    };
     expect(onDisk.tokens[0]!.token).toBe(result.token);
     expect(onDisk.tokens[0]!.expiresAt).toBe(result.expiresAt);
   });
 
   test("does not refresh tokens that are not near expiry", async () => {
     const now = new Date();
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{
-        id: "skippy",
-        token: "still-fresh",
-        role: "agent",
-        expiresAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
-      }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [
+          {
+            id: "scout",
+            token: "still-fresh",
+            role: "agent",
+            expiresAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+    );
 
     const provider = await TokenAuthProvider.load(tokensPath);
     const result = await provider.refreshBearerToken("still-fresh", {
@@ -336,14 +408,19 @@ describe("TokenAuthProvider token refresh", () => {
 
   test("serializes concurrent refresh requests for the same token", async () => {
     const now = new Date();
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{
-        id: "skippy",
-        token: "old-token",
-        role: "agent",
-        expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
-      }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [
+          {
+            id: "scout",
+            token: "old-token",
+            role: "agent",
+            expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+    );
 
     const provider = await TokenAuthProvider.load(tokensPath);
     const results = await Promise.all([
@@ -360,7 +437,9 @@ describe("TokenAuthProvider token refresh", () => {
     ]);
 
     expect(results.filter((result) => result.ok)).toHaveLength(1);
-    const onDisk = await Bun.file(tokensPath).json() as { tokens: Array<{ token: string }> };
+    const onDisk = (await Bun.file(tokensPath).json()) as {
+      tokens: Array<{ token: string }>;
+    };
     const successful = results.find((result) => result.ok);
     expect(successful?.ok).toBe(true);
     if (successful?.ok) {
@@ -369,19 +448,31 @@ describe("TokenAuthProvider token refresh", () => {
   });
 
   test("reloadFromDisk picks up edited token files", async () => {
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{ id: "skippy", token: "before", role: "agent" }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [{ id: "scout", token: "before", role: "agent" }],
+      }),
+    );
     const provider = await TokenAuthProvider.load(tokensPath);
-    expect(provider.authenticate(makeReq("/call", "POST", "before"))?.userId).toBe("skippy");
+    expect(
+      provider.authenticate(makeReq("/call", "POST", "before"))?.userId,
+    ).toBe("scout");
 
-    await Bun.write(tokensPath, JSON.stringify({
-      tokens: [{ id: "rico", token: "after", role: "admin" }],
-    }));
+    await Bun.write(
+      tokensPath,
+      JSON.stringify({
+        tokens: [{ id: "rico", token: "after", role: "admin" }],
+      }),
+    );
     await provider.reloadFromDisk();
 
-    expect(provider.authenticate(makeReq("/call", "POST", "before"))).toBeNull();
-    expect(provider.authenticate(makeReq("/call", "POST", "after"))?.userId).toBe("rico");
+    expect(
+      provider.authenticate(makeReq("/call", "POST", "before")),
+    ).toBeNull();
+    expect(
+      provider.authenticate(makeReq("/call", "POST", "after"))?.userId,
+    ).toBe("rico");
   });
 });
 
@@ -428,14 +519,20 @@ describe("authenticateRequest", () => {
 
   test("returns context for valid token", () => {
     const provider = new TokenAuthProvider([AGENT_TOKEN]);
-    const ctx = authenticateRequest(makeReq("/call", "POST", "agent-secret"), provider);
+    const ctx = authenticateRequest(
+      makeReq("/call", "POST", "agent-secret"),
+      provider,
+    );
     expect(ctx).not.toBeNull();
     expect(ctx!.role).toBe("agent");
   });
 
   test("returns null for invalid token", () => {
     const provider = new TokenAuthProvider([ADMIN_TOKEN]);
-    const ctx = authenticateRequest(makeReq("/call", "POST", "wrong"), provider);
+    const ctx = authenticateRequest(
+      makeReq("/call", "POST", "wrong"),
+      provider,
+    );
     expect(ctx).toBeNull();
   });
 });
@@ -445,27 +542,43 @@ describe("checkPermission", () => {
     const admin = { userId: "rico", role: "admin" as const };
     expect(checkPermission(makeReq("/api/services", "GET"), admin)).toBeNull();
     expect(checkPermission(makeReq("/api/services", "POST"), admin)).toBeNull();
-    expect(checkPermission(makeReq("/api/services/foo", "DELETE"), admin)).toBeNull();
-    expect(checkPermission(makeReq("/api/services/import", "POST"), admin)).toBeNull();
+    expect(
+      checkPermission(makeReq("/api/services/foo", "DELETE"), admin),
+    ).toBeNull();
+    expect(
+      checkPermission(makeReq("/api/services/import", "POST"), admin),
+    ).toBeNull();
     expect(checkPermission(makeReq("/shutdown", "POST"), admin)).toBeNull();
   });
 
   test("agent can list and call but not mutate", () => {
-    const agent = { userId: "skippy", role: "agent" as const };
+    const agent = { userId: "scout", role: "agent" as const };
     expect(checkPermission(makeReq("/api/services", "GET"), agent)).toBeNull();
     expect(checkPermission(makeReq("/call", "POST"), agent)).toBeNull();
     expect(checkPermission(makeReq("/list-tools", "POST"), agent)).toBeNull();
-    expect(checkPermission(makeReq("/api/services", "POST"), agent)).toBe("add");
-    expect(checkPermission(makeReq("/api/services/foo", "DELETE"), agent)).toBe("remove");
-    expect(checkPermission(makeReq("/api/services/import", "POST"), agent)).toBe("import");
-    expect(checkPermission(makeReq("/shutdown", "POST"), agent)).toBe("shutdown");
+    expect(checkPermission(makeReq("/api/services", "POST"), agent)).toBe(
+      "add",
+    );
+    expect(checkPermission(makeReq("/api/services/foo", "DELETE"), agent)).toBe(
+      "remove",
+    );
+    expect(
+      checkPermission(makeReq("/api/services/import", "POST"), agent),
+    ).toBe("import");
+    expect(checkPermission(makeReq("/shutdown", "POST"), agent)).toBe(
+      "shutdown",
+    );
   });
 
   test("viewer can only list and status", () => {
     const viewer = { userId: "v", role: "viewer" as const };
     expect(checkPermission(makeReq("/api/services", "GET"), viewer)).toBeNull();
-    expect(checkPermission(makeReq("/api/services/foo/status", "GET"), viewer)).toBeNull();
+    expect(
+      checkPermission(makeReq("/api/services/foo/status", "GET"), viewer),
+    ).toBeNull();
     expect(checkPermission(makeReq("/call", "POST"), viewer)).toBe("call");
-    expect(checkPermission(makeReq("/api/services", "POST"), viewer)).toBe("add");
+    expect(checkPermission(makeReq("/api/services", "POST"), viewer)).toBe(
+      "add",
+    );
   });
 });

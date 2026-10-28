@@ -10,7 +10,7 @@ import type { CredentialsConfig } from "../../src/credentials/index.ts";
 
 const SAMPLE_CONFIG: CredentialsConfig = {
   groups: {
-    ai_agents: ["skippy", "bilby", "nagatha"],
+    ai_agents: ["scout", "builder", "navigator"],
     admins: ["rico"],
   },
   credentials: {
@@ -42,7 +42,9 @@ describe("CredentialManager", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  function makeManager(config: CredentialsConfig = SAMPLE_CONFIG): CredentialManager {
+  function makeManager(
+    config: CredentialsConfig = SAMPLE_CONFIG,
+  ): CredentialManager {
     return new CredentialManager(structuredClone(config), configPath);
   }
 
@@ -55,14 +57,21 @@ describe("CredentialManager", () => {
     });
 
     test("returns empty config when file does not exist", async () => {
-      const mgr = await CredentialManager.load(join(tmpDir, "nonexistent.json"));
+      const mgr = await CredentialManager.load(
+        join(tmpDir, "nonexistent.json"),
+      );
       expect(mgr.identityNames).toEqual([]);
       expect(mgr.groupNames).toEqual([]);
     });
 
     test("throws on invalid config", async () => {
-      await Bun.write(configPath, JSON.stringify({ groups: { bad: "notarray" } }));
-      expect(CredentialManager.load(configPath)).rejects.toThrow(CredentialManagerError);
+      await Bun.write(
+        configPath,
+        JSON.stringify({ groups: { bad: "notarray" } }),
+      );
+      expect(CredentialManager.load(configPath)).rejects.toThrow(
+        CredentialManagerError,
+      );
     });
   });
 
@@ -76,7 +85,7 @@ describe("CredentialManager", () => {
 
     test("falls back to group credential when no direct match", () => {
       const mgr = makeManager();
-      const cred = mgr.resolve("skippy", "open-brain");
+      const cred = mgr.resolve("scout", "open-brain");
       expect(cred).not.toBeNull();
       expect(cred!.headers!.Authorization).toBe("Bearer agent-ob");
     });
@@ -109,9 +118,9 @@ describe("CredentialManager", () => {
 
     test("group overrides defaults for the same service", () => {
       const mgr = makeManager();
-      // skippy is in ai_agents which has n8n credentials
+      // scout is in ai_agents which has n8n credentials
       // defaults also has n8n credentials
-      const cred = mgr.resolve("skippy", "n8n");
+      const cred = mgr.resolve("scout", "n8n");
       expect(cred!.env!.N8N_API_KEY).toBe("agent-n8n");
     });
 
@@ -134,8 +143,12 @@ describe("CredentialManager", () => {
     test("resolveWithSource reports the effective credential source", () => {
       const mgr = makeManager();
       expect(mgr.resolveWithSource("rico", "open-brain")?.source).toBe("user");
-      expect(mgr.resolveWithSource("skippy", "open-brain")?.identity).toBe("ai_agents");
-      expect(mgr.resolveWithSource("unknown-user", "proxmox")?.source).toBe("default");
+      expect(mgr.resolveWithSource("scout", "open-brain")?.identity).toBe(
+        "ai_agents",
+      );
+      expect(mgr.resolveWithSource("unknown-user", "proxmox")?.source).toBe(
+        "default",
+      );
     });
   });
 
@@ -143,33 +156,45 @@ describe("CredentialManager", () => {
     test("sets and persists a new credential", async () => {
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
       await Bun.write(configPath, "{}");
-      await mgr.setCredential("rico", "obv2", { headers: { Authorization: "Bearer new" } });
+      await mgr.setCredential("rico", "obv2", {
+        headers: { Authorization: "Bearer new" },
+      });
 
       const cred = mgr.resolve("rico", "obv2");
       expect(cred!.headers!.Authorization).toBe("Bearer new");
 
       // Verify disk
       const disk = await Bun.file(configPath).json();
-      expect(disk.credentials.rico.obv2.headers.Authorization).toBe("Bearer new");
+      expect(disk.credentials.rico.obv2.headers.Authorization).toBe(
+        "Bearer new",
+      );
     });
 
     test("updates existing credential", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
-      await mgr.setCredential("rico", "open-brain", { headers: { Authorization: "Bearer updated" } });
-      expect(mgr.resolve("rico", "open-brain")!.headers!.Authorization).toBe("Bearer updated");
+      await mgr.setCredential("rico", "open-brain", {
+        headers: { Authorization: "Bearer updated" },
+      });
+      expect(mgr.resolve("rico", "open-brain")!.headers!.Authorization).toBe(
+        "Bearer updated",
+      );
     });
 
     test("rejects credential with neither headers nor env", async () => {
       await Bun.write(configPath, "{}");
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
-      expect(mgr.setCredential("rico", "svc", {})).rejects.toThrow(CredentialManagerError);
+      expect(mgr.setCredential("rico", "svc", {})).rejects.toThrow(
+        CredentialManagerError,
+      );
     });
 
     test("rejects invalid credential structure", async () => {
       await Bun.write(configPath, "{}");
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
-      expect(mgr.setCredential("rico", "svc", { headers: { bad: 123 } })).rejects.toThrow(CredentialManagerError);
+      expect(
+        mgr.setCredential("rico", "svc", { headers: { bad: 123 } }),
+      ).rejects.toThrow(CredentialManagerError);
     });
 
     test("creates parent directory on first write", async () => {
@@ -179,10 +204,14 @@ describe("CredentialManager", () => {
         missingPath,
       );
 
-      await mgr.setCredential("rico", "svc", { headers: { Authorization: "Bearer new" } });
+      await mgr.setCredential("rico", "svc", {
+        headers: { Authorization: "Bearer new" },
+      });
 
       const disk = await Bun.file(missingPath).json();
-      expect(disk.credentials.rico.svc.headers.Authorization).toBe("Bearer new");
+      expect(disk.credentials.rico.svc.headers.Authorization).toBe(
+        "Bearer new",
+      );
     });
   });
 
@@ -220,7 +249,9 @@ describe("CredentialManager", () => {
     test("throws when credential does not exist", async () => {
       await Bun.write(configPath, "{}");
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
-      expect(mgr.removeCredential("nobody", "svc")).rejects.toThrow(CredentialManagerError);
+      expect(mgr.removeCredential("nobody", "svc")).rejects.toThrow(
+        CredentialManagerError,
+      );
     });
   });
 
@@ -235,7 +266,9 @@ describe("CredentialManager", () => {
     test("throws when default does not exist", async () => {
       await Bun.write(configPath, "{}");
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
-      expect(mgr.removeDefault("nonexistent")).rejects.toThrow(CredentialManagerError);
+      expect(mgr.removeDefault("nonexistent")).rejects.toThrow(
+        CredentialManagerError,
+      );
     });
   });
 
@@ -250,69 +283,89 @@ describe("CredentialManager", () => {
     test("addGroup throws when group already exists", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
-      expect(mgr.addGroup("ai_agents", ["test"])).rejects.toThrow(CredentialManagerError);
+      expect(mgr.addGroup("ai_agents", ["test"])).rejects.toThrow(
+        CredentialManagerError,
+      );
     });
 
     test("addGroup rejects names that conflict with credential identities", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
-      expect(mgr.addGroup("rico", ["alice"])).rejects.toThrow(CredentialManagerError);
+      expect(mgr.addGroup("rico", ["alice"])).rejects.toThrow(
+        CredentialManagerError,
+      );
     });
 
     test("addGroup rejects non-string members", async () => {
       await Bun.write(configPath, "{}");
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
-      expect(mgr.addGroup("team", ["alice", 123] as unknown as string[])).rejects.toThrow(CredentialManagerError);
+      expect(
+        mgr.addGroup("team", ["alice", 123] as unknown as string[]),
+      ).rejects.toThrow(CredentialManagerError);
     });
 
     test("addGroup rejects reserved object keys", async () => {
       await Bun.write(configPath, "{}");
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
-      expect(mgr.addGroup("__proto__", ["alice"])).rejects.toThrow(CredentialManagerError);
+      expect(mgr.addGroup("__proto__", ["alice"])).rejects.toThrow(
+        CredentialManagerError,
+      );
     });
 
     test("addGroupMembers adds new members", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
-      await mgr.addGroupMembers("ai_agents", ["claude", "skippy"]);
+      await mgr.addGroupMembers("ai_agents", ["claude", "scout"]);
       const members = mgr.getGroupMembers("ai_agents")!;
       expect(members).toContain("claude");
-      // Should not duplicate skippy
-      expect(members.filter((m: string) => m === "skippy").length).toBe(1);
+      // Should not duplicate scout
+      expect(members.filter((m: string) => m === "scout").length).toBe(1);
     });
 
     test("addGroupMembers throws for nonexistent group", async () => {
       await Bun.write(configPath, "{}");
       const mgr = makeManager({ groups: {}, credentials: {}, defaults: {} });
-      expect(mgr.addGroupMembers("nope", ["x"])).rejects.toThrow(CredentialManagerError);
+      expect(mgr.addGroupMembers("nope", ["x"])).rejects.toThrow(
+        CredentialManagerError,
+      );
     });
 
     test("addGroupMembers rejects non-string members", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
-      expect(mgr.addGroupMembers("ai_agents", ["claude", false] as unknown as string[])).rejects.toThrow(CredentialManagerError);
+      expect(
+        mgr.addGroupMembers("ai_agents", [
+          "claude",
+          false,
+        ] as unknown as string[]),
+      ).rejects.toThrow(CredentialManagerError);
     });
 
     test("setCredential allows credentials for existing groups", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
       await mgr.setCredential("ai_agents", "svc", { headers: { X: "1" } });
-      expect(mgr.resolve("skippy", "svc")?.headers?.X).toBe("1");
+      expect(mgr.resolve("scout", "svc")?.headers?.X).toBe("1");
     });
 
     test("removeGroupMembers removes specified members", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
-      await mgr.removeGroupMembers("ai_agents", ["bilby"]);
+      await mgr.removeGroupMembers("ai_agents", ["builder"]);
       const members = mgr.getGroupMembers("ai_agents")!;
-      expect(members).not.toContain("bilby");
-      expect(members).toContain("skippy");
+      expect(members).not.toContain("builder");
+      expect(members).toContain("scout");
     });
 
     test("removeGroupMembers rejects non-string members", async () => {
       await Bun.write(configPath, JSON.stringify(SAMPLE_CONFIG));
       const mgr = makeManager();
-      expect(mgr.removeGroupMembers("ai_agents", ["bilby", null] as unknown as string[])).rejects.toThrow(CredentialManagerError);
+      expect(
+        mgr.removeGroupMembers("ai_agents", [
+          "builder",
+          null,
+        ] as unknown as string[]),
+      ).rejects.toThrow(CredentialManagerError);
     });
 
     test("removeGroup removes the group", async () => {
@@ -339,7 +392,10 @@ describe("CredentialManager", () => {
         defaults: {},
       };
       const mgr = makeManager(config);
-      expect(mgr.getGroupsForUser("bob").sort()).toEqual(["group_a", "group_b"]);
+      expect(mgr.getGroupsForUser("bob").sort()).toEqual([
+        "group_a",
+        "group_b",
+      ]);
       expect(mgr.getGroupsForUser("nobody")).toEqual([]);
     });
   });
@@ -378,7 +434,9 @@ describe("CredentialManager", () => {
       } as never);
 
       const updated = structuredClone(SAMPLE_CONFIG);
-      updated.defaults.proxmox = { headers: { Authorization: "PVEAPIToken=rotated" } };
+      updated.defaults.proxmox = {
+        headers: { Authorization: "PVEAPIToken=rotated" },
+      };
       await Bun.write(configPath, JSON.stringify(updated));
 
       await mgr.reloadFromDisk();

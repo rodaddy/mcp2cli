@@ -202,7 +202,9 @@ describe("Daemon Observability", () => {
       const pool = new ConnectionPool();
       const server = makeServer(
         pool,
-        new TokenAuthProvider([{ id: "skippy", token: "agent-token", role: "agent" }]),
+        new TokenAuthProvider([
+          { id: "scout", token: "agent-token", role: "agent" },
+        ]),
       );
 
       const lines = await captureStderrAsync(async () => {
@@ -222,13 +224,12 @@ describe("Daemon Observability", () => {
       });
 
       const responseLines = parseLogEntries(lines).filter(
-        (e) =>
-          e.component === "daemon:request" && e.message === "response_out",
+        (e) => e.component === "daemon:request" && e.message === "response_out",
       );
 
       expect(responseLines.length).toBeGreaterThanOrEqual(1);
       const entry = responseLines[0]!;
-      expect(entry.data?.userId).toBe("skippy");
+      expect(entry.data?.userId).toBe("scout");
       expect(entry.data?.role).toBe("agent");
 
       await pool.closeAll();
@@ -238,7 +239,9 @@ describe("Daemon Observability", () => {
       const pool = new ConnectionPool();
       const server = makeServer(
         pool,
-        new TokenAuthProvider([{ id: "skippy", token: "agent-token", role: "agent" }]),
+        new TokenAuthProvider([
+          { id: "scout", token: "agent-token", role: "agent" },
+        ]),
       );
 
       const callReq = new Request("http://localhost/call", {
@@ -255,13 +258,17 @@ describe("Daemon Observability", () => {
       });
       await server.fetch(callReq);
 
-      const metricsRes = await server.fetch(new Request("http://localhost/metrics", { method: "GET" }));
+      const metricsRes = await server.fetch(
+        new Request("http://localhost/metrics", { method: "GET" }),
+      );
       const metricsBody = await metricsRes.text();
-      expect(metricsBody).toContain('mcp2cli_requests_total{service="test-svc",tool="my-tool"} 1');
-      expect(metricsBody).not.toContain('caller="skippy"');
+      expect(metricsBody).toContain(
+        'mcp2cli_requests_total{service="test-svc",tool="my-tool"} 1',
+      );
+      expect(metricsBody).not.toContain('caller="scout"');
 
       const userRes = await server.fetch(
-        new Request("http://localhost/api/metrics/user/skippy", {
+        new Request("http://localhost/api/metrics/user/scout", {
           method: "GET",
           headers: { Authorization: "Bearer agent-token" },
         }),
@@ -275,11 +282,15 @@ describe("Daemon Observability", () => {
         requests: Array<{ service: string; tool: string; count: number }>;
       };
       expect(userBody.success).toBe(true);
-      expect(userBody.userId).toBe("skippy");
+      expect(userBody.userId).toBe("scout");
       expect(userBody.totalRequests).toBe(1);
       expect(userBody.errorCount).toBe(0);
       expect(userBody.requests).toEqual([
-        expect.objectContaining({ service: "test-svc", tool: "my-tool", count: 1 }),
+        expect.objectContaining({
+          service: "test-svc",
+          tool: "my-tool",
+          count: 1,
+        }),
       ]);
 
       await pool.closeAll();
@@ -291,27 +302,37 @@ describe("Daemon Observability", () => {
       const pool = new ConnectionPool();
       const server = makeServer(
         pool,
-        new TokenAuthProvider([{ id: "skippy", token: "agent-token", role: "agent" }]),
+        new TokenAuthProvider([
+          { id: "scout", token: "agent-token", role: "agent" },
+        ]),
       );
 
       try {
-        await server.fetch(new Request("http://localhost/call", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: "Bearer agent-token",
-          },
-          body: JSON.stringify({
-            service: "test-svc",
-            tool: "my-tool",
-            params: {},
+        await server.fetch(
+          new Request("http://localhost/call", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: "Bearer agent-token",
+            },
+            body: JSON.stringify({
+              service: "test-svc",
+              tool: "my-tool",
+              params: {},
+            }),
           }),
-        }));
+        );
 
-        const metricsRes = await server.fetch(new Request("http://localhost/metrics", { method: "GET" }));
+        const metricsRes = await server.fetch(
+          new Request("http://localhost/metrics", { method: "GET" }),
+        );
         const metricsBody = await metricsRes.text();
-        expect(metricsBody).toContain('mcp2cli_requests_total{service="test-svc",tool="my-tool",caller="skippy"} 1');
-        expect(metricsBody).toContain('mcp2cli_request_duration_ms_count{service="test-svc",tool="my-tool",caller="skippy"} 1');
+        expect(metricsBody).toContain(
+          'mcp2cli_requests_total{service="test-svc",tool="my-tool",caller="scout"} 1',
+        );
+        expect(metricsBody).toContain(
+          'mcp2cli_request_duration_ms_count{service="test-svc",tool="my-tool",caller="scout"} 1',
+        );
       } finally {
         if (original === undefined) {
           delete process.env.MCP2CLI_METRICS_INCLUDE_CALLER;
@@ -327,7 +348,7 @@ describe("Daemon Observability", () => {
       const server = makeServer(
         pool,
         new TokenAuthProvider([
-          { id: "skippy", token: "agent-token", role: "agent" },
+          { id: "scout", token: "agent-token", role: "agent" },
           { id: "rico", token: "admin-token", role: "admin" },
         ]),
       );
@@ -341,7 +362,7 @@ describe("Daemon Observability", () => {
       expect(denied.status).toBe(403);
 
       const allowed = await server.fetch(
-        new Request("http://localhost/api/metrics/user/skippy", {
+        new Request("http://localhost/api/metrics/user/scout", {
           method: "GET",
           headers: { Authorization: "Bearer agent-token" },
         }),
@@ -349,7 +370,7 @@ describe("Daemon Observability", () => {
       expect(allowed.status).toBe(200);
 
       const adminAllowed = await server.fetch(
-        new Request("http://localhost/api/metrics/user/skippy", {
+        new Request("http://localhost/api/metrics/user/scout", {
           method: "GET",
           headers: { Authorization: "Bearer admin-token" },
         }),
@@ -379,8 +400,7 @@ describe("Daemon Observability", () => {
       });
 
       const responseLines = parseLogEntries(lines).filter(
-        (e) =>
-          e.component === "daemon:request" && e.message === "response_out",
+        (e) => e.component === "daemon:request" && e.message === "response_out",
       );
 
       expect(responseLines.length).toBeGreaterThanOrEqual(1);
@@ -418,8 +438,7 @@ describe("Daemon Observability", () => {
       });
 
       const responseLines = parseLogEntries(lines).filter(
-        (e) =>
-          e.component === "daemon:request" && e.message === "response_out",
+        (e) => e.component === "daemon:request" && e.message === "response_out",
       );
 
       expect(responseLines.length).toBeGreaterThanOrEqual(1);
