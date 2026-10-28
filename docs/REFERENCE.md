@@ -169,17 +169,18 @@ mcp2cli n8n n8n_get_workflow --params '{"id": "123"}' | jq 'if .error then .mess
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Validation error (bad input, schema mismatch) |
-| 2 | Auth error (missing credentials, permission denied) |
-| 3 | Tool error (MCP tool returned an error) |
-| 4 | Connection error (daemon unreachable, transport failure) |
-| 5 | Internal error |
+| 1 | Validation error (bad input, schema mismatch, unknown service) |
+| 2 | Internal error |
+| 3 | Auth error (missing credentials, permission denied) |
+| 4 | Tool error (MCP tool returned an error) |
+| 5 | Connection error (daemon unreachable, transport failure) |
+| 10 | Dry run completed (`--dry-run`; nothing was executed) |
 
 Use exit codes for scripting:
 
 ```bash
 mcp2cli n8n n8n_get_workflow --params '{"id": "123"}' 2>/dev/null
-if [ $? -eq 4 ]; then
+if [ $? -eq 5 ]; then
   echo "Connection failed -- is the MCP server configured?"
 fi
 ```
@@ -693,7 +694,7 @@ mcp2cli generate-skills open-brain --conflict=merge
 mcp2cli open-brain --help
 ```
 
-Local validation should use an isolated temporary `MCP2CLI_HOME`/config/cache so
+Local validation should use an isolated temporary `HOME` (or `MCP2CLI_CONFIG` and `MCP2CLI_CACHE_DIR`) so
 tests cannot mutate the operator's real local `~/.config/mcp2cli` state. Final
 verification should run against the hosted daemon and prove the new tools are
 visible and callable there.
