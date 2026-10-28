@@ -87,7 +87,7 @@ patch version automatically, which is why the git log shows a
 
 ## How it is tested
 
-- `bun test`: 1099 pass, 1 skip, 0 fail on 2026-10-27, in 21 test areas under
+- `bun test`: 1099 pass, 1 skip, 0 fail on 2026-10-27, in 18 test areas under
   `tests/` (cli, daemon, cache, schema, credentials, secrets, resilience,
   integration and others). PR #74 recorded 1081 passing tests on 2026-09-04.
 - `tests/fixtures/mock-mcp-server.ts` is a real MCP server used by the
