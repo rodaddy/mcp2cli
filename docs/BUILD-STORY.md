@@ -30,9 +30,9 @@ call timeouts, pool size limits and health checks before connection reuse.
 | 2026-03-30 to 06-08 | Schema handling | Per-service timeouts (#15), auto-resolving service-prefixed tool names (#16), schema caching with drift detection and auto-regeneration (#21), cross-service tool search (#22), structured audit logging (#23), a health endpoint that reports configured vs connected services (#24), downloadable skill bundles (#25). |
 | 2026-06-09 to 06-18 | Network daemon | Per-service local/remote routing with retry and preconnect (#26), per-identity credentials with groups and RBAC (#28), caller identity header templating (#32), an automatic patch-version bump on merge (#31), hardened discovery and auth for the shared hub (#41, #51). |
 | 2026-06-27 to 08-03 | Correctness fixes from daily use | Slim generated `SKILL.md` as a routing index (#57), schema cache invalidation on upstream contract change (#59), `${secret:...}` resolution fixes for the daemon and stdio env (#62, #66), tool timeouts passed through to the MCP SDK (#64, #70). |
-| 2026-09-04 to 09-07 | Move to self-hosted Forgejo, CI repair, container image | Repo and CI moved to Forgejo Actions (#74), two hidden test bugs fixed so CI no longer needed workarounds (#84), a CI check that blocks process-global transport mocks (#88), image build moved into the repo (#92) and then slimmed (#103), a CI check that VERSION and package.json agree (#106). |
-| 2026-09-29 to 10-08 | Daemon and audit hardening | Drop a pooled connection when a tool call times out (#109), never store the response of a secret-returning tool in the audit log (#112), `--params -` reads JSON from stdin (#113), affected-test selection on PRs (#116), transport-mock probes split into four CI shards (#119). |
-| 2026-10-13 to 10-27 | Public snapshot and cleanup | A scrubbed sync of the current code back to the public GitHub repository, start-up fix when the runtime directory is missing (#125), CI probes run only when the check they probe changes (#129), removal of a retired runtime integration (#131). |
+| 2026-09-04 to 09-07 | Move to self-hosted Forgejo, CI repair, container image | Repo and CI moved to Forgejo Actions, two hidden test bugs fixed so CI no longer needed workarounds, a CI check that blocks process-global transport mocks, image build moved into the repo and then slimmed, a CI check that VERSION and package.json agree. |
+| 2026-09-29 to 10-08 | Daemon and audit hardening | Drop a pooled connection when a tool call times out, never store the response of a secret-returning tool in the audit log, `--params -` reads JSON from stdin, affected-test selection on PRs, transport-mock probes split into four CI shards. |
+| 2026-10-13 to 10-27 | Public snapshot and cleanup | A scrubbed sync of the current code back to the public GitHub repository, start-up fix when the runtime directory is missing, CI probes run only when the check they probe changes, removal of a retired runtime integration. |
 
 The VERSION file reads 0.3.22. From June onward each merge to `main` bumped the
 patch version automatically, which is why the git log shows a
@@ -48,12 +48,12 @@ patch version automatically, which is why the git log shows a
   call is slow, so a daemon holds a connection pool, exits after an idle
   timeout, and later grew a network mode so several machines share one set of
   server connections and credentials (#26, #28).
-- **One owner for backend dispatch (#84).** Four CLI commands each carried an
-  identical stdio/HTTP/WebSocket branch. PR #84 moved that dispatch into
+- **One owner for backend dispatch.** Four CLI commands each carried an
+  identical stdio/HTTP/WebSocket branch. One PR moved that dispatch into
   `src/connection/connect.ts` with a substitution seam, so tests replace the
   connector instead of patching the module registry. An unknown backend now
   throws instead of falling through to stdio.
-- **Call servers over HTTP instead of bundling them (#103).** The container
+- **Call servers over HTTP instead of bundling them.** The container
   image first bundled MCP servers. That image failed to build five times for
   five different reasons: a silently dropped optional npm dependency, a
   node-gyp build against a Python without distutils, icons hidden by a broad
@@ -62,7 +62,7 @@ patch version automatically, which is why the git log shows a
   PR concluded that one image satisfying every server's build dependencies
   fails in as many ways as it has servers, and moved each server to its own
   deployment.
-- **Redact by tool name, not by value (#112).** Audit logs stored the values
+- **Redact by tool name, not by value.** Audit logs stored the values
   returned by secret-lookup tools, because key-based sanitising cannot see a
   secret under a neutral key such as `text`. The fix classifies a call as
   sensitive by service and tool name and records only the response length.
@@ -75,41 +75,41 @@ patch version automatically, which is why the git log shows a
   pull request from 2026-03-09 (#3).
 - From September, work was split into small agent lanes, each with a written
   brief and an executable "done-means" check that had to fail before the
-  change and pass after it. PR #74 records `forge-origin.sh` and
+  change and pass after it. The Forgejo migration PR records `forge-origin.sh` and
   `graph-mode-installed.sh` going red then green.
-- PRs from October went through an automated review pipeline. PR #112
+- PRs from October went through an automated review pipeline. The audit-redaction PR
   records one reviewer's pass and two automated review rounds, each answered with
-  a fix and fresh mutation receipts. PR #119 was written by a GPT
+  a fix and fresh mutation receipts. The CI-shard PR was written by a GPT
   model in an automated review-and-fix pipeline and records a rehearsed
   revert.
-- Issue #90 records a lesson from that work: a 10-line runtime preload
+- One issue records a lesson from that work: a 10-line runtime preload
   enforced a test rule better than the static check written for it.
 
 ## How it is tested
 
 - `bun test`: 1099 pass, 1 skip, 0 fail on 2026-10-27, in 18 test areas under
   `tests/` (cli, daemon, cache, schema, credentials, secrets, resilience,
-  integration and others). PR #74 recorded 1081 passing tests on 2026-09-04.
+  integration and others). The Forgejo migration PR recorded 1081 passing tests on 2026-09-04.
 - `tests/fixtures/mock-mcp-server.ts` is a real MCP server used by the
   integration tests and by the terminal screenshot in the README.
 - `scripts/done-means/no-connection-module-mocks.ts` fails CI if a test patches
   the module registry for a transport. Its probe runs 104 known-bad cases
-  against the check, split across four CI shards since #119.
-- CI also checks that VERSION and package.json agree (#106), after an image
-  built from tag v0.3.19 reported version 0.3.18 (#102).
+  against the check, split across four CI shards.
+- CI also checks that VERSION and package.json agree, after an image
+  built from tag v0.3.19 reported version 0.3.18.
 
 ## What did not work, and what changed
 
 - **CI propped up by workarounds.** CI ran tests under an extra init process
-  and split the suite into separate runs. PR #84 found both hid real bugs. The
+  and split the suite into separate runs. The dispatch PR found both hid real bugs. The
   daemon treated an exited but unreaped (zombie) process as alive, because
   `kill(pid, 0)` still succeeds on a zombie; `isPidAlive()` now reads
   `/proc/<pid>/stat`. Five test files patched transport modules globally, and
   `mock.restore()` does not undo that. After the fix the single-process suite
   went from 1076 pass / 8 fail to 1084 pass / 0 fail.
-- **The bundled-server image** never built and was dropped (#103, above).
+- **The bundled-server image** never built and was dropped (above).
 - **Duplicate CI runs.** Every PR commit ran the full suite twice, once for the
-  push and once for the pull request (#115). PR #116 limited push builds to
+  push and once for the pull request. A later PR limited push builds to
   `main` and runs only affected tests on PRs. `main` still runs everything.
 - **A 60-second hard-coded timeout** lost the results of long tool calls that
   the daemon had in fact completed (#68). The resolved per-tool timeout is now
@@ -118,7 +118,7 @@ patch version automatically, which is why the git log shows a
 ## Current state
 
 Active, at version 0.3.22. It is the author's daily route from several coding
-agents to their MCP servers. Open issues on Forgejo include idle reaping for
-the daemon pool (#107), a codesign step for macOS builds (#67), a migration
-from Bun to Node 24 (#78), and explicit fail-closed handling for MCP
+agents to their MCP servers. Open issues include idle reaping for
+the daemon pool, a codesign step for macOS builds (#67), a migration
+from Bun to Node 24, and explicit fail-closed handling for MCP
 elicitation (#48).
